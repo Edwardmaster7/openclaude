@@ -141,7 +141,7 @@ describe('OpenClaude validation tips', () => {
 
     expect(tip).toEqual({
       suggestion:
-        'Valid modes: "acceptEdits" (ask before file changes), "plan" (analysis only), "bypassPermissions" (auto-accept all), or "default" (standard behavior)',
+        'Valid modes: "acceptEdits" (ask before file changes), "plan" (analysis only), "bypassPermissions" (auto-accept all), "dontAsk" (auto-accept all without asking), or "default" (standard behavior)',
     })
   })
 })

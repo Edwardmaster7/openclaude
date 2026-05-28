@@ -282,10 +282,21 @@ export function getSettingsFilePathForSource(
       )
     case 'projectSettings':
     case 'localSettings': {
-      return join(
+      const openClaudePath = join(
         getSettingsRootPathForSource(source),
         getRelativeSettingsFilePathForSource(source),
       )
+      const legacyPath = join(
+        getSettingsRootPathForSource(source),
+        source === 'projectSettings' ? '.claude/settings.json' : '.claude/settings.local.json',
+      )
+      if (
+        !getFsImplementation().existsSync(openClaudePath) &&
+        getFsImplementation().existsSync(legacyPath)
+      ) {
+        return legacyPath
+      }
+      return openClaudePath
     }
     case 'policySettings':
       return getManagedSettingsFilePath()

@@ -274,6 +274,38 @@ describe('OpenClaude paths', () => {
     )
   })
 
+  test('getSettingsFilePathForSource falls back to legacy .claude if .openclaude is missing', async () => {
+    await acquireEnvMutex()
+    const tempProj = mkdtempSync(join(tmpdir(), 'openclaude-project-test-'))
+    try {
+      mock.module('../bootstrap/state.js', () => ({
+        getOriginalCwd: () => tempProj,
+      }))
+
+      const { getSettingsFilePathForSource } = await importFreshSettings()
+
+      expect(getSettingsFilePathForSource('projectSettings')).toBe(
+        join(tempProj, '.openclaude/settings.json'),
+      )
+
+      mkdirSync(join(tempProj, '.claude'), { recursive: true })
+      writeFileSync(join(tempProj, '.claude/settings.json'), '{}')
+
+      expect(getSettingsFilePathForSource('projectSettings')).toBe(
+        join(tempProj, '.claude/settings.json'),
+      )
+
+      mkdirSync(join(tempProj, '.openclaude'), { recursive: true })
+      writeFileSync(join(tempProj, '.openclaude/settings.json'), '{}')
+
+      expect(getSettingsFilePathForSource('projectSettings')).toBe(
+        join(tempProj, '.openclaude/settings.json'),
+      )
+    } finally {
+      rmSync(tempProj, { recursive: true, force: true })
+    }
+  })
+
   test('local installer uses openclaude wrapper path', async () => {
     await acquireEnvMutex()
     // Force .openclaude config home so the test doesn't fall back to

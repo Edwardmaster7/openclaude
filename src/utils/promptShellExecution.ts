@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import type { Tool, ToolUseContext } from '../Tool.js'
 import { BashTool } from '../tools/BashTool/BashTool.js'
 import { logForDebugging } from './debug.js'
-import { errorMessage, MalformedCommandError, ShellError } from './errors.js'
+import { errorMessage, isShellError, MalformedCommandError } from './errors.js'
 import type { FrontmatterShell } from './frontmatterParser.js'
 import { createAssistantMessage } from './messages.js'
 import { hasPermissionsToUseTool } from './permissions/permissions.js'
@@ -179,7 +179,7 @@ function formatBashOutput(
 }
 
 function formatBashError(e: unknown, pattern: string, inline = false): never {
-  if (e instanceof ShellError) {
+  if (isShellError(e)) {
     if (e.interrupted) {
       throw new MalformedCommandError(
         `Shell command interrupted for pattern "${pattern}": [Command interrupted]`,
