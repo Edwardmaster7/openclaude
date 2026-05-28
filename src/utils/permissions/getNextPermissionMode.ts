@@ -59,18 +59,20 @@ export function getNextPermissionMode(
       if (canCycleToAuto(toolPermissionContext)) {
         return 'auto'
       }
-      return 'default'
+      return 'dontAsk'
 
     case 'bypassPermissions':
       if (canCycleToAuto(toolPermissionContext)) {
         return 'auto'
       }
-      return 'default'
+      return 'dontAsk'
+
+    case 'auto':
+      return 'dontAsk'
 
     case 'dontAsk':
       // Not exposed in UI cycle yet, but return default if somehow reached
       return 'default'
-
 
     default:
       // Covers auto (when TRANSCRIPT_CLASSIFIER is enabled) and any future modes — always fall back to default

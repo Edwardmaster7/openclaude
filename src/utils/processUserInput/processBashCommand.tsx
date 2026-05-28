@@ -7,7 +7,7 @@ import { BashTool } from 'src/tools/BashTool/BashTool.js';
 import type { AttachmentMessage, SystemMessage, UserMessage } from 'src/types/message.js';
 import type { ShellProgress } from 'src/types/tools.js';
 import { logEvent } from '../../services/analytics/index.js';
-import { errorMessage, ShellError } from '../errors.js';
+import { errorMessage, isShellError } from '../errors.js';
 import { createSyntheticUserCaveatMessage, createUserInterruptionMessage, createUserMessage, prepareUserContent } from '../messages.js';
 import { resolveDefaultShell } from '../shell/resolveDefaultShell.js';
 import { isPowerShellToolEnabled } from '../shell/shellToolUtils.js';
@@ -114,7 +114,7 @@ export async function processBashCommand(inputString: string, precedingInputBloc
       shouldQuery: false
     };
   } catch (e) {
-    if (e instanceof ShellError) {
+    if (isShellError(e)) {
       if (e.interrupted) {
         return {
           messages: [createSyntheticUserCaveatMessage(), userMessage, createUserInterruptionMessage({
