@@ -205,7 +205,7 @@ function getTeammateCommand(): string {
  * @param options.planModeRequired - If true, don't inherit bypass permissions (plan mode takes precedence)
  * @param options.permissionMode - Permission mode to propagate
  */
-function buildInheritedCliFlags(options?: {
+export function buildInheritedCliFlags(options?: {
   planModeRequired?: boolean
   permissionMode?: PermissionMode
 }): string {
@@ -223,6 +223,8 @@ function buildInheritedCliFlags(options?: {
     flags.push('--dangerously-skip-permissions')
   } else if (permissionMode === 'acceptEdits') {
     flags.push('--permission-mode acceptEdits')
+  } else if (permissionMode === 'dontAsk') {
+    flags.push('--permission-mode dontAsk')
   } else if (permissionMode === 'auto') {
     // Teammates inherit auto mode so the classifier auto-approves their tool
     // calls too. The teammate's own startup (permissionSetup.ts) handles

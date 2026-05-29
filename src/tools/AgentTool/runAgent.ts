@@ -420,11 +420,12 @@ export async function* runAgent({
     const state = toolUseContext.getAppState()
     let toolPermissionContext = state.toolPermissionContext
 
-    // Override permission mode if agent defines one (unless parent is bypassPermissions, acceptEdits, or auto)
+    // Override permission mode if agent defines one (unless parent is bypassPermissions, acceptEdits, dontAsk, or auto)
     if (
       agentPermissionMode &&
       state.toolPermissionContext.mode !== 'bypassPermissions' &&
       state.toolPermissionContext.mode !== 'acceptEdits' &&
+      state.toolPermissionContext.mode !== 'dontAsk' &&
       !(
         feature('TRANSCRIPT_CLASSIFIER') &&
         state.toolPermissionContext.mode === 'auto'

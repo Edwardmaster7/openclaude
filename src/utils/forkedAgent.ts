@@ -361,7 +361,14 @@ export function createSubagentContext(
       ? parentContext.getAppState
       : () => {
           const state = parentContext.getAppState()
-          if (state.toolPermissionContext.shouldAvoidPermissionPrompts) {
+          // Preserve sticky modes (dontAsk, bypassPermissions, acceptEdits)
+          const mode = state.toolPermissionContext.mode
+          if (
+            mode === 'dontAsk' ||
+            mode === 'bypassPermissions' ||
+            mode === 'acceptEdits' ||
+            state.toolPermissionContext.shouldAvoidPermissionPrompts
+          ) {
             return state
           }
           return {

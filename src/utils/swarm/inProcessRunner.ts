@@ -970,8 +970,15 @@ export async function runInProcessTeammate(
   }
 
   // Resolve agent definition - use full system prompt with teammate addendum
-  // IMPORTANT: Set permissionMode to 'default' so teammates always get full tool
-  // access regardless of the leader's permission mode.
+  // IMPORTANT: Teammates inherit the leader's permission mode if it's "sticky"
+  // (dontAsk, bypassPermissions, acceptEdits), otherwise they default to 'default'.
+  const parentMode = toolUseContext.getAppState().toolPermissionContext.mode
+  const isStickyMode =
+    parentMode === 'dontAsk' ||
+    parentMode === 'bypassPermissions' ||
+    parentMode === 'acceptEdits'
+  const permissionMode = isStickyMode ? parentMode : 'default'
+
   const resolvedAgentDefinition: CustomAgentDefinition = {
     agentType: identity.agentName,
     whenToUse: `In-process teammate: ${identity.agentName}`,
@@ -994,7 +1001,7 @@ export async function runInProcessTeammate(
         ]
       : ['*'],
     source: 'projectSettings',
-    permissionMode: 'default',
+    permissionMode,
     // Propagate model from custom agent definition so getAgentModel()
     // can use it as a fallback when no tool-level model is specified
     ...(agentDefinition?.model ? { model: agentDefinition.model } : {}),

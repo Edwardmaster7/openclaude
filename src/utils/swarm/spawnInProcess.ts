@@ -50,6 +50,7 @@ type SetAppStateFn = (updater: (prev: AppState) => AppState) => void
  */
 export type SpawnContext = {
   setAppState: SetAppStateFn
+  getAppState: () => AppState
   toolUseId?: string
 }
 
@@ -153,6 +154,18 @@ export async function spawnInProcessTeammate(
 
     // Create task state
     const description = `${name}: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}`
+
+    // Inherit permission mode from parent if not in plan mode
+    const parentMode = context.getAppState().toolPermissionContext.mode
+    const isStickyMode =
+      parentMode === 'dontAsk' ||
+      parentMode === 'bypassPermissions' ||
+      parentMode === 'acceptEdits'
+    const permissionMode = planModeRequired
+      ? 'plan'
+      : isStickyMode
+        ? parentMode
+        : 'default'
 
     const taskState: InProcessTeammateTaskState = {
       ...createTaskStateBase(
