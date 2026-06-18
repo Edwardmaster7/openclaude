@@ -238,6 +238,7 @@ function PromptInput({
   voiceInterimRange
 }: Props): React.ReactNode {
   const mainLoopModel = useMainLoopModel();
+  const { trackActivity } = useBuddyNotification();
   // A local-jsx command (e.g., /mcp while agent is running) renders a full-
   // screen dialog on top of PromptInput via the immediate-command path with
   // shouldHidePromptInput: false. Those dialogs don't register in the overlay
@@ -992,6 +993,7 @@ function PromptInput({
     setSuggestionsStateRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
   }, []);
   const onSubmit = useCallback(async (inputParam: string, isSubmittingSlashCommand = false, slashCommandOverride?: Command) => {
+    trackActivity();
     inputParam = inputParam.trimEnd();
 
     // Don't submit if a footer indicator is being opened. Read fresh from
@@ -1114,7 +1116,7 @@ function PromptInput({
     }, undefined, slashCommandOverride ? {
       slashCommandOverride
     } : undefined);
-  }, [promptSuggestionState, speculation, speculationSessionTimeSavedMs, teamContext, store, footerItems, suggestionsState.suggestions, onSubmitProp, onAgentSubmit, clearBuffer, resetHistory, logOutcomeAtSubmission, setAppState, markAccepted, pastedContents, removeNotification]);
+  }, [promptSuggestionState, speculation, speculationSessionTimeSavedMs, teamContext, store, footerItems, suggestionsState.suggestions, onSubmitProp, onAgentSubmit, clearBuffer, resetHistory, logOutcomeAtSubmission, setAppState, markAccepted, pastedContents, removeNotification, trackActivity]);
   const {
     suggestions,
     selectedSuggestion,
@@ -2029,7 +2031,6 @@ function PromptInput({
       timeoutMs: 12_000
     });
   }, [effortNotificationText, addNotification, removeNotification]);
-  useBuddyNotification();
   const companionSpeaking = isBuddyEnabled() ?
   useAppState(s => s.companionReaction !== undefined) : false;
   const {

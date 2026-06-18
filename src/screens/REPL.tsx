@@ -271,6 +271,7 @@ import { useIssueFlagBanner } from '../hooks/useIssueFlagBanner.js';
 import { CompanionSprite, CompanionFloatingBubble, MIN_COLS_FOR_FULL_SPRITE } from '../buddy/CompanionSprite.js';
 import { isBuddyEnabled } from '../buddy/feature.js';
 import { fireCompanionObserver } from '../buddy/observer.js';
+import { getLastDetectedFeedback, clearLastDetectedFeedback } from '../hooks/feedbackHook.js';
 // Session manager removed - using AppState now
 import type { RemoteSessionConfig } from '../remote/RemoteSessionManager.js';
 import { REMOTE_SAFE_COMMANDS } from '../commands.js';
@@ -2950,10 +2951,14 @@ export function REPL({
       onQueryEvent(event);
     }
     if (isBuddyEnabled()) {
-      void fireCompanionObserver(messagesRef.current, reaction => setAppState(prev => prev.companionReaction === reaction ? prev : {
+      const feedbackResult = getLastDetectedFeedback();
+      // Pass only current-turn messages for stats accumulation, full history for tool name lookups
+      const currentTurnMessages = messagesRef.current.slice(messagesIncludingNewMessages.length);
+      void fireCompanionObserver(currentTurnMessages, reaction => setAppState(prev => prev.companionReaction === reaction ? prev : {
         ...prev,
         companionReaction: reaction
-      }));
+      }), feedbackResult ?? undefined, messagesRef.current);
+      clearLastDetectedFeedback();
     }
     queryCheckpoint('query_end');
 

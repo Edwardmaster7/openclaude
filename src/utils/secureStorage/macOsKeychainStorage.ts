@@ -38,6 +38,7 @@ export const macOsKeychainStorage = {
       const username = getUsername()
       const result = execSyncWithDefaults_DEPRECATED(
         `security find-generic-password -a "${username}" -w -s "${storageServiceName}"`,
+        { timeout: 1500 }
       )
       if (result) {
         const data = jsonParse(result)
@@ -184,7 +185,7 @@ async function doReadAsync(): Promise<SecureStorageData | null> {
     const { stdout, code } = await execFileNoThrow(
       'security',
       ['find-generic-password', '-a', username, '-w', '-s', storageServiceName],
-      { useCwd: false, preserveOutputOnError: false },
+      { useCwd: false, preserveOutputOnError: false, timeout: 1500 },
     )
     if (code === 0 && stdout) {
       return jsonParse(stdout.trim())
@@ -220,6 +221,7 @@ export function isMacOsKeychainLocked(): boolean {
     const result = execaSync('security', ['show-keychain-info'], {
       reject: false,
       stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 1500,
     })
     // Exit code 36 indicates the keychain is locked
     keychainLockedCache = result.exitCode === 36

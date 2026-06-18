@@ -44,7 +44,7 @@ export async function findRelevantMemories(
   alreadySurfaced: ReadonlySet<string> = new Set(),
 ): Promise<RelevantMemory[]> {
   const memories = (await scanMemoryFiles(memoryDir, signal)).filter(
-    m => !alreadySurfaced.has(m.filePath),
+    m => !alreadySurfaced.has(m.filePath) && (m.score === undefined || m.score >= 20) && !m.ignored,
   )
   if (memories.length === 0) {
     return []
@@ -60,6 +60,12 @@ export async function findRelevantMemories(
   const selected = selectedFilenames
     .map(filename => byFilename.get(filename))
     .filter((m): m is MemoryHeader => m !== undefined)
+
+  // Boost critical memories (score >= 80) by always loading them if not already selected
+  const criticalMemories = memories.filter(
+    m => m.score !== undefined && m.score >= 80 && !selectedFilenames.includes(m.filename),
+  )
+  selected.push(...criticalMemories)
 
   // Fires even on empty selection: selection-rate needs the denominator,
   // and -1 ages distinguish "ran, picked nothing" from "never ran".

@@ -1,4 +1,5 @@
 import { getGlobalConfig } from '../utils/config.js'
+import { hashString } from './hash.js'
 import {
   type Companion,
   type CompanionBones,
@@ -22,18 +23,6 @@ function mulberry32(seed: number): () => number {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
-}
-
-function hashString(s: string): number {
-  if (typeof Bun !== 'undefined') {
-    return Number(BigInt(Bun.hash(s)) & 0xffffffffn)
-  }
-  let h = 2166136261
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i)
-    h = Math.imul(h, 16777619)
-  }
-  return h >>> 0
 }
 
 function pick<T>(rng: () => number, arr: readonly T[]): T {
@@ -127,7 +116,9 @@ export function companionUserId(): string {
 export function getCompanion(): Companion | undefined {
   const stored = getGlobalConfig().companion
   if (!stored) return undefined
-  const { bones } = roll(companionUserId())
-  // bones last so stale bones fields in old-format configs get overridden
-  return { ...stored, ...bones }
+  // use stored seed if present, fallback to userId
+  const seedToUse = stored.seed ?? `${companionUserId()}:buddy`
+  const { bones } = rollWithSeed(seedToUse)
+  // stored last so the unlocked hat overrides the bones hat
+  return { ...bones, ...stored } as Companion
 }

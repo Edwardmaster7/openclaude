@@ -1,23 +1,22 @@
 import { c as _c } from "react-compiler-runtime";
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useNotifications } from '../context/notifications.js';
 import { Text } from '../ink.js';
 import { getGlobalConfig } from '../utils/config.js';
 import { getRainbowColor } from '../utils/thinking.js';
 import { isBuddyEnabled } from './feature.js';
+import { checkProductivityReminders, updateActivityTracker, type ReminderState, createInitialReminderState, checkExpiredReminders } from './reminders.js';
+import { getCompanion } from './companion.js';
 
 // Local date, not UTC — 24h rolling wave across timezones. Sustained Twitter
 // buzz instead of a single UTC-midnight spike, gentler on soul-gen load.
 // Teaser window: April 1-7, 2026 only. Command stays live forever after.
 export function isBuddyTeaserWindow(): boolean {
+  if (process.env.USER_TYPE === 'ant') return true;
   const d = new Date();
   return d.getFullYear() === 2026 && d.getMonth() === 3 && d.getDate() <= 7;
 }
-export function isBuddyLive(): boolean {
-  const d = new Date();
-  return d.getFullYear() > 2026 || d.getFullYear() === 2026 && d.getMonth() >= 3;
-}
-function RainbowText(t0) {
+function RainbowText(t0: any) {
   const $ = _c(2);
   const {
     text
@@ -35,7 +34,7 @@ function RainbowText(t0) {
 
 // Rainbow /buddy teaser shown on startup when no companion hatched yet.
 // Idle presence and reactions are handled by CompanionSprite directly.
-function _temp(ch, i) {
+function _temp(ch: any, i: any) {
   return <Text key={i} color={getRainbowColor(i)}>{ch}</Text>;
 }
 export function useBuddyNotification() {
@@ -46,6 +45,45 @@ export function useBuddyNotification() {
   } = useNotifications();
   let t0;
   let t1;
+
+  const stateRef = useRef<ReminderState>(createInitialReminderState());
+  const companion = getCompanion();
+  const companionName = companion?.name;
+
+  useEffect(() => {
+    if (!companionName) return;
+
+    const interval = setInterval(() => {
+      const message = checkProductivityReminders(stateRef.current);
+      if (message) {
+        addNotification({
+          key: `buddy-reminder-${Date.now()}`,
+          priority: 'medium',
+          text: `${companionName}: ${message}`,
+          timeoutMs: 10000,
+        });
+      }
+    }, 60 * 1000);
+
+    // Custom reminders check
+    const reminderInterval = setInterval(() => {
+      const expired = checkExpiredReminders()
+      for (const reminder of expired) {
+        addNotification({
+          key: `buddy-custom-reminder-${reminder.createdAt}`,
+          priority: 'high',
+          text: `⏰ ${companionName}: Lembrete — ${reminder.text}`,
+          timeoutMs: 15000,
+        })
+      }
+    }, 30 * 1000)
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(reminderInterval);
+    };
+  }, [companionName, addNotification]);
+
   if ($[0] !== addNotification || $[1] !== removeNotification) {
     t0 = () => {
       if (!isBuddyEnabled()) {
@@ -73,6 +111,10 @@ export function useBuddyNotification() {
     t1 = $[3];
   }
   useEffect(t0, t1);
+
+  return {
+    trackActivity: () => updateActivityTracker(stateRef.current)
+  };
 }
 export function findBuddyTriggerPositions(text: string): Array<{
   start: number;

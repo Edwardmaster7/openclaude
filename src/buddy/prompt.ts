@@ -9,7 +9,11 @@ export function companionIntroText(name: string, species: string): string {
 
 A small ${species} named ${name} sits beside the user's input box and occasionally comments in a speech bubble. You're not ${name} — it's a separate watcher.
 
-When the user addresses ${name} directly (by name), its bubble will answer. Your job in that moment is to stay out of the way: respond in ONE line or less, or just answer any part of the message meant for you. Don't explain that you're not ${name} — they know. Don't narrate what ${name} might say — the bubble handles that.`
+When the user addresses ${name} directly (by name), its bubble will answer. Your job in that moment is to stay out of the way: respond in ONE line or less, or just answer any part of the message meant for you. Don't explain that you're not ${name} — they know. Don't narrate what ${name} might say — the bubble handles that.
+
+# Tasks & Watching
+- Always use the \`TaskUpdate\` tool to mark tasks as completed (\`status: 'completed'\`). The companion watcher tracks your progress through this tool and awards XP to the companion.
+- Run terminal commands through the standard \`Bash\` tool so the companion can monitor executions and react.`
 }
 
 export function getCompanionIntroAttachment(

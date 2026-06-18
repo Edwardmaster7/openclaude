@@ -38,6 +38,18 @@ const FILE_STABILITY_THRESHOLD_MS = 1000
 const FILE_STABILITY_POLL_INTERVAL_MS = 500
 
 /**
+ * Bun's native fs.watch() has a PathWatcherManager deadlock.
+ * Workaround: use stat() polling under Bun. No FSWatcher = no deadlock.
+ */
+const USE_POLLING = typeof Bun !== 'undefined'
+
+/**
+ * Polling interval for chokidar when usePolling is enabled.
+ */
+const POLLING_INTERVAL_MS = 2000
+
+
+/**
  * Time window in milliseconds to consider a file change as internal.
  * If a file change occurs within this window after markInternalWrite() is called,
  * it's assumed to be from Claude Code itself and won't trigger a notification.
@@ -62,21 +74,12 @@ const MDM_POLL_INTERVAL_MS = 30 * 60 * 1000 // 30 minutes
 const DELETION_GRACE_MS =
   FILE_STABILITY_THRESHOLD_MS + FILE_STABILITY_POLL_INTERVAL_MS + 200
 
-/**
- * Time in milliseconds to batch accepted filesystem settings changes before
- * resetting caches and notifying listeners.
- */
-const SETTINGS_DEBOUNCE_MS = 500
-
 let watcher: FSWatcher | null = null
 let mdmPollTimer: ReturnType<typeof setInterval> | null = null
 let lastMdmSnapshot: string | null = null
 let initialized = false
 let disposed = false
 const pendingDeletions = new Map<string, ReturnType<typeof setTimeout>>()
-let settingsDebounceTimer: ReturnType<typeof setTimeout> | null = null
-const pendingSettingsSources = new Map<SettingSource, number>()
-const settingsSourceGenerations = new Map<SettingSource, number>()
 const settingsChanged = createSignal<[source: SettingSource]>()
 
 // Test overrides for timing constants
@@ -85,22 +88,7 @@ let testOverrides: {
   pollInterval?: number
   mdmPollInterval?: number
   deletionGrace?: number
-  settingsDebounce?: number
 } | null = null
-
-const defaultDependencies = {
-  clearInternalWrites,
-  consumeInternalWrite,
-  executeConfigChangeHooks,
-  getManagedSettingsDropInDir,
-  getSettingsFilePathForSource,
-  hasBlockingResult,
-  resetSettingsCache,
-  stat,
-  watch: chokidar.watch.bind(chokidar),
-}
-type SettingsChangeDetectorDependencies = typeof defaultDependencies
-let dependencies: SettingsChangeDetectorDependencies = defaultDependencies
 
 /**
  * Initialize file watching
@@ -124,7 +112,7 @@ export async function initialize(): Promise<void> {
     `Watching for changes in setting files ${[...settingsFiles].join(', ')}...${dropInDir ? ` and drop-in directory ${dropInDir}` : ''}`,
   )
 
-  watcher = dependencies.watch(dirs, {
+  watcher = chokidar.watch(dirs, {
     persistent: true,
     ignoreInitial: true,
     depth: 0, // Only watch immediate children, not subdirectories
@@ -160,7 +148,8 @@ export async function initialize(): Promise<void> {
     },
     // Additional options for stability
     ignorePermissionErrors: true,
-    usePolling: false, // Use native file system events
+    usePolling: USE_POLLING,
+    interval: POLLING_INTERVAL_MS,
     atomic: true, // Handle atomic writes better
   })
 
@@ -183,10 +172,8 @@ export function dispose(): Promise<void> {
   }
   for (const timer of pendingDeletions.values()) clearTimeout(timer)
   pendingDeletions.clear()
-  clearSettingsDebounce()
-  settingsSourceGenerations.clear()
   lastMdmSnapshot = null
-  dependencies.clearInternalWrites()
+  clearInternalWrites()
   settingsChanged.clear()
   const w = watcher
   watcher = null
@@ -220,7 +207,7 @@ async function getWatchTargets(): Promise<{
     if (source === 'flagSettings') {
       continue
     }
-    const path = dependencies.getSettingsFilePathForSource(source)
+    const path = getSettingsFilePathForSource(source)
     if (!path) {
       continue
     }
@@ -235,7 +222,7 @@ async function getWatchTargets(): Promise<{
 
     // Check if file exists - only watch directories that have at least one existing file
     try {
-      const stats = await dependencies.stat(path)
+      const stats = await stat(path)
       if (stats.isFile()) {
         dirsWithExistingFiles.add(dir)
       }
@@ -261,9 +248,9 @@ async function getWatchTargets(): Promise<{
   // its immediate children (the .json files). Any .json file inside it maps
   // to the 'policySettings' source.
   let dropInDir: string | null = null
-  const managedDropIn = dependencies.getManagedSettingsDropInDir()
+  const managedDropIn = getManagedSettingsDropInDir()
   try {
-    const stats = await dependencies.stat(managedDropIn)
+    const stats = await stat(managedDropIn)
     if (stats.isDirectory()) {
       dirsWithExistingFiles.add(managedDropIn)
       dropInDir = managedDropIn
@@ -292,7 +279,6 @@ function settingSourceToConfigChangeSource(
 }
 
 function handleChange(path: string): void {
-  if (disposed) return
   const source = getSourceForPath(path)
   if (!source) return
 
@@ -308,7 +294,7 @@ function handleChange(path: string): void {
   }
 
   // Check if this was an internal write
-  if (dependencies.consumeInternalWrite(path, INTERNAL_WRITE_WINDOW_MS)) {
+  if (consumeInternalWrite(path, INTERNAL_WRITE_WINDOW_MS)) {
     return
   }
 
@@ -316,17 +302,15 @@ function handleChange(path: string): void {
 
   // Fire ConfigChange hook first — if blocked (exit code 2 or decision: 'block'),
   // skip applying the change to the session
-  const generation = nextSettingsSourceGeneration(source)
-  void dependencies.executeConfigChangeHooks(
+  void executeConfigChangeHooks(
     settingSourceToConfigChangeSource(source),
     path,
   ).then(results => {
-    if (dependencies.hasBlockingResult(results)) {
+    if (hasBlockingResult(results)) {
       logForDebugging(`ConfigChange hook blocked change to ${path}`)
       return
     }
-    if (disposed) return
-    scheduleFanOut(source, generation)
+    fanOut(source)
   })
 }
 
@@ -335,7 +319,6 @@ function handleChange(path: string): void {
  * pending deletion grace timer and treats the event as a change.
  */
 function handleAdd(path: string): void {
-  if (disposed) return
   const source = getSourceForPath(path)
   if (!source) return
 
@@ -358,7 +341,6 @@ function handleAdd(path: string): void {
  * the deletion is cancelled and treated as a normal change instead.
  */
 function handleDelete(path: string): void {
-  if (disposed) return
   const source = getSourceForPath(path)
   if (!source) return
 
@@ -367,29 +349,25 @@ function handleDelete(path: string): void {
   // If there's already a pending deletion for this path, let it run
   if (pendingDeletions.has(path)) return
 
-  const generation = nextSettingsSourceGeneration(source)
   const timer = setTimeout(
-    (p, src, gen) => {
-      if (disposed) return
+    (p, src) => {
       pendingDeletions.delete(p)
 
       // Fire ConfigChange hook first — if blocked, skip applying the deletion
-      void dependencies.executeConfigChangeHooks(
+      void executeConfigChangeHooks(
         settingSourceToConfigChangeSource(src),
         p,
       ).then(results => {
-        if (dependencies.hasBlockingResult(results)) {
+        if (hasBlockingResult(results)) {
           logForDebugging(`ConfigChange hook blocked deletion of ${p}`)
           return
         }
-        if (disposed) return
-        scheduleFanOut(src, gen)
+        fanOut(src)
       })
     },
     testOverrides?.deletionGrace ?? DELETION_GRACE_MS,
     path,
     source,
-    generation,
   )
   pendingDeletions.set(path, timer)
 }
@@ -399,18 +377,13 @@ function getSourceForPath(path: string): SettingSource | undefined {
   const normalizedPath = platformPath.normalize(path)
 
   // Check if the path is inside the managed-settings.d/ drop-in directory
-  const dropInDir = platformPath.normalize(
-    dependencies.getManagedSettingsDropInDir(),
-  )
+  const dropInDir = getManagedSettingsDropInDir()
   if (normalizedPath.startsWith(dropInDir + platformPath.sep)) {
     return 'policySettings'
   }
 
   return SETTING_SOURCES.find(
-    source =>
-      platformPath.normalize(
-        dependencies.getSettingsFilePathForSource(source) ?? '',
-      ) === normalizedPath,
+    source => getSettingsFilePathForSource(source) === normalizedPath,
   )
 }
 
@@ -475,52 +448,8 @@ function startMdmPoll(): void {
  * repopulates; all subsequent listeners hit the cache.
  */
 function fanOut(source: SettingSource): void {
-  dependencies.resetSettingsCache()
+  resetSettingsCache()
   settingsChanged.emit(source)
-}
-
-function clearSettingsDebounce(): void {
-  if (settingsDebounceTimer) {
-    clearTimeout(settingsDebounceTimer)
-    settingsDebounceTimer = null
-  }
-  pendingSettingsSources.clear()
-}
-
-function nextSettingsSourceGeneration(source: SettingSource): number {
-  const generation = (settingsSourceGenerations.get(source) ?? 0) + 1
-  settingsSourceGenerations.set(source, generation)
-  return generation
-}
-
-function scheduleFanOut(source: SettingSource, generation: number): void {
-  if (disposed) return
-  if (settingsSourceGenerations.get(source) !== generation) return
-  pendingSettingsSources.set(source, generation)
-
-  if (settingsDebounceTimer) {
-    clearTimeout(settingsDebounceTimer)
-  }
-
-  settingsDebounceTimer = setTimeout(() => {
-    settingsDebounceTimer = null
-    if (disposed) {
-      pendingSettingsSources.clear()
-      return
-    }
-
-    const sources = [...pendingSettingsSources].flatMap(([src, generation]) =>
-      settingsSourceGenerations.get(src) === generation ? [src] : [],
-    )
-    pendingSettingsSources.clear()
-
-    if (sources.length === 0) return
-
-    dependencies.resetSettingsCache()
-    for (const src of sources) {
-      settingsChanged.emit(src)
-    }
-  }, testOverrides?.settingsDebounce ?? SETTINGS_DEBOUNCE_MS)
 }
 
 /**
@@ -547,7 +476,6 @@ export function resetForTesting(overrides?: {
   pollInterval?: number
   mdmPollInterval?: number
   deletionGrace?: number
-  settingsDebounce?: number
 }): Promise<void> {
   if (mdmPollTimer) {
     clearInterval(mdmPollTimer)
@@ -555,8 +483,6 @@ export function resetForTesting(overrides?: {
   }
   for (const timer of pendingDeletions.values()) clearTimeout(timer)
   pendingDeletions.clear()
-  clearSettingsDebounce()
-  settingsSourceGenerations.clear()
   lastMdmSnapshot = null
   initialized = false
   disposed = false
@@ -564,15 +490,6 @@ export function resetForTesting(overrides?: {
   const w = watcher
   watcher = null
   return w ? w.close() : Promise.resolve()
-}
-
-export const _handleChangeForTesting = handleChange
-export const _handleDeleteForTesting = handleDelete
-
-export function _setDependenciesForTesting(
-  overrides: Partial<SettingsChangeDetectorDependencies> = {},
-): void {
-  dependencies = { ...defaultDependencies, ...overrides }
 }
 
 export const settingsChangeDetector = {

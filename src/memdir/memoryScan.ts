@@ -16,6 +16,9 @@ export type MemoryHeader = {
   mtimeMs: number
   description: string | null
   type: MemoryType | undefined
+  score?: number
+  confirmations?: number
+  ignored?: boolean
 }
 
 const MAX_MEMORY_FILES = 200
@@ -60,12 +63,24 @@ export async function scanMemoryFiles(
           signal,
         )
         const { frontmatter } = parseFrontmatter(content, filePath)
+        const score = typeof frontmatter.score === 'number'
+          ? frontmatter.score
+          : (typeof frontmatter.score === 'string' ? parseInt(frontmatter.score, 10) : undefined)
+        const confirmations = typeof frontmatter.confirmations === 'number'
+          ? frontmatter.confirmations
+          : (typeof frontmatter.confirmations === 'string' ? parseInt(frontmatter.confirmations, 10) : undefined)
+
+        const ignored = frontmatter.ignored === true || frontmatter.ignored === 'true'
+
         return {
           filename: relativePath,
           filePath,
           mtimeMs,
           description: frontmatter.description || null,
           type: parseMemoryType(frontmatter.type),
+          score: !isNaN(score as number) ? score : undefined,
+          confirmations: !isNaN(confirmations as number) ? confirmations : undefined,
+          ignored: ignored ? true : undefined,
         }
       }),
     )

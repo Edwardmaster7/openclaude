@@ -50,6 +50,12 @@ export const mushroom = c(
   0x6d,
 ) as 'mushroom'
 export const chonk = c(0x63, 0x68, 0x6f, 0x6e, 0x6b) as 'chonk'
+export const lion = c(0x6c, 0x69, 0x6f, 0x6e) as 'lion'
+export const crab = c(0x63, 0x72, 0x61, 0x62) as 'crab'
+export const bear = c(0x62, 0x65, 0x61, 0x72) as 'bear'
+export const ufo = c(0x75, 0x66, 0x6f) as 'ufo'
+export const sprout = c(0x73, 0x70, 0x72, 0x6f, 0x75, 0x74) as 'sprout'
+export const bat = c(0x62, 0x61, 0x74) as 'bat'
 
 export const SPECIES = [
   duck,
@@ -70,6 +76,12 @@ export const SPECIES = [
   rabbit,
   mushroom,
   chonk,
+  lion,
+  crab,
+  bear,
+  ufo,
+  sprout,
+  bat,
 ] as const
 export type Species = (typeof SPECIES)[number] // biome-ignore format: keep compact
 
@@ -85,6 +97,11 @@ export const HATS = [
   'wizard',
   'beanie',
   'tinyduck',
+  'pirate',
+  'chef',
+  'santa',
+  'party',
+  'headphones',
 ] as const
 export type Hat = (typeof HATS)[number]
 
@@ -111,6 +128,11 @@ export type CompanionBones = {
 export type CompanionSoul = {
   name: string
   personality: string
+  xp?: number
+  hat?: string
+  evolvedFrom?: string
+  konamiUsed?: boolean
+  premiumUntil?: number
 }
 
 export type Companion = CompanionBones &
@@ -121,7 +143,11 @@ export type Companion = CompanionBones &
 // What actually persists in config. Bones are regenerated from hash(userId)
 // on every read so species renames don't break stored companions and users
 // can't edit their way to a legendary.
-export type StoredCompanion = CompanionSoul & { hatchedAt: number }
+export type StoredCompanion = CompanionSoul & {
+  hatchedAt: number
+  seed?: string
+  species?: string
+}
 
 export const RARITY_WEIGHTS = {
   common: 60,
@@ -146,3 +172,53 @@ export const RARITY_COLORS = {
   epic: 'autoAccept',
   legendary: 'warning',
 } as const satisfies Record<Rarity, keyof import('../utils/theme.js').Theme>
+
+// ─── Shop Types ──────────────────────────────────────────────────────────────
+
+export type ShopCategory = 'acessorios' | 'temas' | 'titulos' | 'emotes' | 'abilities'
+
+export type ShopItem = {
+  id: string
+  name: string
+  description: string
+  price: number
+  category: ShopCategory
+  duration?: number // ms, undefined = permanente/uso único
+}
+
+export type CompanionShop = {
+  ownedAccessories: string[]
+  ownedThemes: string[]
+  ownedEmotes: string[]
+  ownedAbilities: string[]
+  ownedTitles: string[]
+  activeAbilities: { id: string; expiresAt: number }[]
+  equippedAccessories: string[] // max 3
+  equippedTheme: string | null
+  equippedEmotes: string | null
+  equippedTitle: string | null
+  customTitle: string | null
+  xpShieldUntil: number | null
+  quickTipsUntil: number | null
+  codeReviewProUntil: number | null
+  xpBoostUntil: number | null
+  xpMagnetUntil: number | null
+  premiumUntil: number | null
+  nameGlowUntil: number | null
+  wallOfFameUntil: number | null
+  veteranLuckUnlocked: boolean
+  bugBuddyUnlocked: boolean
+  shieldUseCount: number
+  luckyBlocks: number
+}
+
+// ─── XP Loss Types ───────────────────────────────────────────────────────────
+
+export type XpLossLog = {
+  totalLost: number
+  lastLossDate: string
+  dailyLossToday: number
+  dailyLossDate: string
+  solitarioCount: number
+  lossesThisSession: number
+}
