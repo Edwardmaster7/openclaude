@@ -40,6 +40,8 @@ export default defineVendor({
       { id: 'gemini-3-flash-preview', apiName: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
       { id: 'gemini-3.1-flash-lite-preview', apiName: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash-Lite Preview' },
       { id: 'gemini-2.0-flash', apiName: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+      { id: 'gemma-4-26b-a4b-it', apiName: 'gemma-4-26b-a4b-it', label: 'Gemma 4 26B A4B' },
+      { id: 'gemma-4-31b-it', apiName: 'gemma-4-31b-it', label: 'Gemma 4 31B' },
     ],
   },
   usage: { supported: false },

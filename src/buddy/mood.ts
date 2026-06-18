@@ -1,6 +1,7 @@
 import { getGlobalConfig } from '../utils/config.js'
 import { scanMemoryFiles } from '../memdir/memoryScan.js'
 import { getAutoMemPath } from '../memdir/paths.js'
+import { createCombinedAbortSignal } from '../utils/combinedAbortSignal.js'
 
 export type BuddyMood = {
   emoji: string
@@ -10,32 +11,37 @@ export type BuddyMood = {
 
 async function getFeedbackMood(): Promise<BuddyMood | null> {
   try {
-    const memories = await scanMemoryFiles(getAutoMemPath(), AbortSignal.timeout(1000))
-    const feedbackRules = memories.filter(m => m.type === 'feedback' && !m.ignored)
+    const { signal, cleanup } = createCombinedAbortSignal(undefined, { timeoutMs: 1000 })
+    try {
+      const memories = await scanMemoryFiles(getAutoMemPath(), signal)
+      const feedbackRules = memories.filter(m => m.type === 'feedback' && !m.ignored)
 
-    if (feedbackRules.length === 0) {
-      return { emoji: '📝', text: 'Ainda nao aprendi regras. Me corrija quando eu errar!', mood: 'neutro' }
-    }
-
-    const avgScore = feedbackRules.reduce((sum, m) => sum + (m.score ?? 50), 0) / feedbackRules.length
-
-    if (avgScore >= 80) {
-      return {
-        emoji: '🧠',
-        text: `Voce tem ${feedbackRules.length} regras consolidadas! Aprendendo rapido.`,
-        mood: 'orgulhoso',
+      if (feedbackRules.length === 0) {
+        return { emoji: '📝', text: 'Ainda nao aprendi regras. Me corrija quando eu errar!', mood: 'neutro' }
       }
-    }
 
-    if (avgScore < 40) {
-      return {
-        emoji: '🤔',
-        text: `Tenho ${feedbackRules.length} regras esquecidas... quer revisar?`,
-        mood: 'preocupado',
+      const avgScore = feedbackRules.reduce((sum, m) => sum + (m.score ?? 50), 0) / feedbackRules.length
+
+      if (avgScore >= 80) {
+        return {
+          emoji: '🧠',
+          text: `Voce tem ${feedbackRules.length} regras consolidadas! Aprendendo rapido.`,
+          mood: 'orgulhoso',
+          }
+        }
+
+      if (avgScore < 40) {
+        return {
+          emoji: '🤔',
+          text: `Tenho ${feedbackRules.length} regras esquecidas... quer revisar?`,
+          mood: 'preocupado',
+        }
       }
-    }
 
-    return null
+      return null
+    } finally {
+      cleanup()
+    }
   } catch {
     return null
   }

@@ -29,10 +29,15 @@ import { isModelAllowed } from './modelAllowlist.js'
 import { type ModelAlias, isModelAlias } from './aliases.js'
 import { capitalize } from '../stringUtils.js'
 import { DEFAULT_GEMINI_MODEL } from '../providerProfile.js'
+import { getAntModelOverrideConfig, resolveAntModel } from './antModels.js'
 
 export type ModelShortName = string
 export type ModelName = string
 export type ModelSetting = ModelName | ModelAlias | null
+
+function getMiniMaxModelEnv(): string | undefined {
+  return process.env.ANTHROPIC_MODEL || process.env.OPENAI_MODEL
+}
 
 function normalizeModelSetting(value: unknown): ModelName | ModelAlias | undefined {
   if (typeof value !== 'string') return undefined
@@ -70,7 +75,7 @@ export function getSmallFastModel(): ModelName {
   // MiniMax — OPENAI_MODEL carries the active MiniMax model; fall back to
   // the fastest tier (M2.5-highspeed) when missing.
   if (getAPIProvider() === 'minimax') {
-    return process.env.OPENAI_MODEL || 'MiniMax-M2.5-highspeed'
+    return getMiniMaxModelEnv() || 'MiniMax-M2.5-highspeed'
   }
   // Xiaomi MiMo — OPENAI_MODEL carries the active MiMo model; fall back to
   // the fast tier when missing.
@@ -136,6 +141,7 @@ export function getUserSpecifiedModelSetting(): ModelSetting | undefined {
     specifiedModel =
       (provider === 'gemini' ? process.env.GEMINI_MODEL : undefined) ||
       (provider === 'mistral' ? process.env.MISTRAL_MODEL : undefined) ||
+      (provider === 'minimax' ? getMiniMaxModelEnv() : undefined) ||
       (isOpenAIShimProvider ? process.env.OPENAI_MODEL : undefined) ||
       (provider === 'firstParty' ? process.env.ANTHROPIC_MODEL : undefined) ||
       setting ||
@@ -205,7 +211,7 @@ export function getDefaultOpusModel(): ModelName {
   }
   // MiniMax — flagship tier for "opus"-equivalent.
   if (getAPIProvider() === 'minimax') {
-    return process.env.OPENAI_MODEL || 'MiniMax-M2.7'
+    return getMiniMaxModelEnv() || 'MiniMax-M2.7'
   }
   // Xiaomi MiMo — flagship tier for "opus"-equivalent.
   if (getAPIProvider() === 'xiaomi-mimo') {
@@ -255,7 +261,7 @@ export function getDefaultSonnetModel(): ModelName {
   }
   // MiniMax — mid tier for "sonnet"-equivalent.
   if (getAPIProvider() === 'minimax') {
-    return process.env.OPENAI_MODEL || 'MiniMax-M2.5'
+    return getMiniMaxModelEnv() || 'MiniMax-M2.5'
   }
   // Xiaomi MiMo — flagship model for "sonnet"-equivalent.
   if (getAPIProvider() === 'xiaomi-mimo') {
@@ -303,7 +309,7 @@ export function getDefaultHaikuModel(): ModelName {
   }
   // MiniMax — fastest tier for "haiku"-equivalent.
   if (getAPIProvider() === 'minimax') {
-    return process.env.OPENAI_MODEL || 'MiniMax-M2.5-highspeed'
+    return getMiniMaxModelEnv() || 'MiniMax-M2.5-highspeed'
   }
   // Xiaomi MiMo — fast tier for "haiku"-equivalent.
   if (getAPIProvider() === 'xiaomi-mimo') {
@@ -385,9 +391,12 @@ export function getDefaultMainLoopModelSetting(): ModelName | ModelAlias {
   if (getAPIProvider() === 'xai') {
     return process.env.OPENAI_MODEL || 'grok-4.3'
   }
-  // MiniMax provider: always use the configured MiniMax model
+  // MiniMax provider: always use the configured MiniMax model.
+  // Keep the env-only fallback aligned with the MiniMax descriptor default
+  // (MiniMax-M3) so a session with only MINIMAX_API_KEY / a MiniMax base URL
+  // defaults to the same model as --provider minimax and saved profiles.
   if (getAPIProvider() === 'minimax') {
-    return process.env.OPENAI_MODEL || 'MiniMax-M2.7'
+    return getMiniMaxModelEnv() || 'MiniMax-M3'
   }
   // Xiaomi MiMo provider: always use the configured MiMo model
   if (getAPIProvider() === 'xiaomi-mimo') {
@@ -752,7 +761,7 @@ export function parseUserSpecifiedModel(
       case 'opus':
         return getDefaultOpusModel() + (has1mTag ? '[1m]' : '')
       case 'best':
-        return getBestModel()
+        return getBestModel() + (has1mTag ? '[1m]' : '')
       default:
     }
   }

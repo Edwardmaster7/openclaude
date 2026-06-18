@@ -54,6 +54,7 @@ import type { HookProgress } from '../../types/hooks.js'
 import type {
   AssistantMessage,
   AttachmentMessage,
+  HookResultMessage,
   Message,
   ProgressMessage,
   StopHookInfo,
@@ -108,6 +109,7 @@ import {
 } from '../mcp/client.js'
 import { mcpInfoFromString } from '../mcp/mcpStringUtils.js'
 import { normalizeNameForMCP } from '../mcp/normalization.js'
+import { createToolQueryLeaseInput } from './queryActivityLease.js'
 import type { MCPServerConnection } from '../mcp/types.js'
 import {
   getLoggingSafeMcpBaseUrl,
@@ -620,7 +622,22 @@ export function normalizeToolInputForValidation(
   tool: Pick<Tool, 'name'>,
   input: unknown,
 ): unknown {
-  if (tool.name !== ASK_USER_QUESTION_TOOL_NAME || !isRecord(input)) {
+  if (!isRecord(input)) {
+    return input
+  }
+
+  if (tool.name === FILE_READ_TOOL_NAME) {
+    // Codex strict tool schemas can emit placeholder pages: "" / null for
+    // non-PDF reads. Treat those the same as omission before zod validation.
+    const pages = input.pages
+    if (pages === null || (typeof pages === 'string' && pages.trim() === '')) {
+      const { pages: _pages, ...rest } = input
+      return rest
+    }
+    return input
+  }
+
+  if (tool.name !== ASK_USER_QUESTION_TOOL_NAME) {
     return input
   }
 
@@ -812,7 +829,7 @@ async function checkPermissionsAndCallTool(
     )
   }
 
-  const resultingMessages = []
+  const resultingMessages: MessageUpdateLazy[] = []
 
   // Defense-in-depth: strip _simulatedSedEdit from model-provided Bash input.
   // This field is internal-only — it must only be injected by the permission
@@ -1235,7 +1252,18 @@ async function checkPermissionsAndCallTool(
   } else if (processedInput !== backfilledClone) {
     callInput = processedInput
   }
+  let queryActivityLease: { release(): void } | undefined
   try {
+    const queryActivityLeaseInput = createToolQueryLeaseInput(
+      tool.name,
+      toolUseID,
+      callInput,
+    )
+    queryActivityLease = queryActivityLeaseInput
+      ? toolUseContext.queryActivity?.acquireLease(queryActivityLeaseInput)
+      : undefined
+    toolUseContext.queryActivity?.registerActivity(`tool:${tool.name}:start`)
+
     const result = await tool.call(
       callInput,
       {
@@ -1247,6 +1275,9 @@ async function checkPermissionsAndCallTool(
       canUseTool,
       assistantMessage,
       progress => {
+        toolUseContext.queryActivity?.registerActivity(
+          `tool:${tool.name}:progress`,
+        )
         onToolProgress({
           toolUseID: progress.toolUseID,
           data: progress.data,
@@ -1358,10 +1389,10 @@ async function checkPermissionsAndCallTool(
       ? getMcpServerScopeFromToolName(tool.name)
       : null
 
-    
+
     // Run PostToolUse hooks
     let toolOutput = result.data
-    const hookResults = []
+    const hookResults: MessageUpdateLazy<HookResultMessage>[] = []
     const toolContextModifier = result.contextModifier
     const mcpMeta = result.mcpMeta
 
@@ -1689,10 +1720,15 @@ async function checkPermissionsAndCallTool(
       ...hookMessages,
     ]
   } finally {
-    stopSessionActivity('tool_exec')
-    // Clean up decision info after logging
-    if (decisionInfo) {
-      toolUseContext.toolDecisions?.delete(toolUseID)
+    try {
+      queryActivityLease?.release()
+      toolUseContext.queryActivity?.registerActivity(`tool:${tool.name}:end`)
+    } finally {
+      stopSessionActivity('tool_exec')
+      // Clean up decision info after logging
+      if (decisionInfo) {
+        toolUseContext.toolDecisions?.delete(toolUseID)
+      }
     }
   }
 }

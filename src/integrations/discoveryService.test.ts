@@ -14,7 +14,9 @@ const originalEnv = {
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
   OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
   OPENAI_API_BASE: process.env.OPENAI_API_BASE,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL,
+  ANTHROPIC_CUSTOM_HEADERS: process.env.ANTHROPIC_CUSTOM_HEADERS,
   CLAUDE_CODE_USE_OPENAI: process.env.CLAUDE_CODE_USE_OPENAI,
   CLAUDE_CODE_USE_GEMINI: process.env.CLAUDE_CODE_USE_GEMINI,
   CLAUDE_CODE_USE_MISTRAL: process.env.CLAUDE_CODE_USE_MISTRAL,
@@ -52,7 +54,9 @@ function restoreEnvValue(
 function clearProviderEnv(): void {
   delete process.env.OPENAI_BASE_URL
   delete process.env.OPENAI_API_BASE
+  delete process.env.OPENAI_API_KEY
   delete process.env.OPENAI_MODEL
+  delete process.env.ANTHROPIC_CUSTOM_HEADERS
   delete process.env.CLAUDE_CODE_USE_OPENAI
   delete process.env.CLAUDE_CODE_USE_GEMINI
   delete process.env.CLAUDE_CODE_USE_MISTRAL
@@ -60,6 +64,7 @@ function clearProviderEnv(): void {
   delete process.env.CLAUDE_CODE_USE_BEDROCK
   delete process.env.CLAUDE_CODE_USE_VERTEX
   delete process.env.CLAUDE_CODE_USE_FOUNDRY
+  delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
 }
 
 beforeEach(async () => {
@@ -81,7 +86,9 @@ afterEach(() => {
     restoreEnvValue('OPENROUTER_API_KEY')
     restoreEnvValue('OPENAI_BASE_URL')
     restoreEnvValue('OPENAI_API_BASE')
+    restoreEnvValue('OPENAI_API_KEY')
     restoreEnvValue('OPENAI_MODEL')
+    restoreEnvValue('ANTHROPIC_CUSTOM_HEADERS')
     restoreEnvValue('CLAUDE_CODE_USE_OPENAI')
     restoreEnvValue('CLAUDE_CODE_USE_GEMINI')
     restoreEnvValue('CLAUDE_CODE_USE_MISTRAL')
@@ -202,7 +209,15 @@ describe('discoverModelsForRoute', () => {
     expect(second).toMatchObject({
       source: 'stale-cache',
       stale: true,
-      models: [{ id: 'llama3.1:8b', apiName: 'llama3.1:8b' }],
+      models: [
+        {
+          id: 'deepseek-v4-pro-cloud',
+          apiName: 'deepseek-v4-pro:cloud',
+          contextWindow: 1_048_576,
+          maxOutputTokens: 65_536,
+        },
+        { id: 'llama3.1:8b', apiName: 'llama3.1:8b' },
+      ],
     })
     expect(second?.error?.message).toContain('Discovery failed')
   })
@@ -425,6 +440,109 @@ describe('discoverModelsForRoute', () => {
 
     expect(result?.routeId).toBe('lmstudio')
     expect(result?.source).toBe('network')
+  })
+
+  test('refreshStartupDiscoveryForActiveRoute discovers custom route with hybrid startup discovery', async () => {
+    const { refreshStartupDiscoveryForActiveRoute } =
+      await loadDiscoveryServiceModule()
+
+    const startupEnv: NodeJS.ProcessEnv = {
+      CLAUDE_CODE_USE_OPENAI: '1',
+      OPENAI_BASE_URL: 'http://localhost:4000/v1',
+      ANTHROPIC_CUSTOM_HEADERS: 'X-Test-Case: startup-context',
+    }
+
+    setMockFetch(mock((_input, init) => {
+      expect(init?.headers).toEqual({ 'X-Test-Case': 'startup-context' })
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'litellm-proxy',
+                model_info: { context_length: 1_000_000 },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+    }) as unknown as typeof globalThis.fetch)
+
+    const result = await refreshStartupDiscoveryForActiveRoute({
+      processEnv: startupEnv,
+    })
+
+    expect(result?.routeId).toBe('custom')
+    expect(result?.source).toBe('network')
+    expect((result?.models ?? [])[0]?.contextWindow).toBe(1_000_000)
+  })
+
+  test('refreshStartupDiscoveryForActiveRoute partitions custom discovery by env custom headers', async () => {
+    const { getDiscoveryCacheKey, refreshStartupDiscoveryForActiveRoute } =
+      await loadDiscoveryServiceModule()
+    const { getCachedModels } = await import('./discoveryCache.js')
+
+    const startupEnv: NodeJS.ProcessEnv = {
+      CLAUDE_CODE_USE_OPENAI: '1',
+      OPENAI_BASE_URL: 'http://localhost:4000/v1',
+      ANTHROPIC_CUSTOM_HEADERS: 'X-Tenant: acme',
+    }
+
+    setMockFetch(mock((input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url
+      expect(url).toBe('http://localhost:4000/v1/models')
+      expect(init?.headers).toEqual({ 'X-Tenant': 'acme' })
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'tenant-model',
+                model_info: { context_length: 1_000_000 },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+    }) as unknown as typeof globalThis.fetch)
+
+    const result = await refreshStartupDiscoveryForActiveRoute({
+      processEnv: startupEnv,
+    })
+    const cached = await getCachedModels(
+      getDiscoveryCacheKey('custom', {
+        baseUrl: 'http://localhost:4000/v1',
+        headers: { 'X-Tenant': 'acme' },
+      }),
+      24 * 60 * 60 * 1000,
+    )
+
+    expect(result?.routeId).toBe('custom')
+    expect(cached?.models[0]?.contextWindow).toBe(1_000_000)
+  })
+
+  test('refreshStartupDiscoveryForActiveRoute still skips anthropic route', async () => {
+    const { refreshStartupDiscoveryForActiveRoute } =
+      await loadDiscoveryServiceModule()
+
+    const startupEnv: NodeJS.ProcessEnv = {
+      CLAUDE_CODE_USE_ANTHROPIC: '1',
+      ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+    }
+
+    const result = await refreshStartupDiscoveryForActiveRoute({
+      processEnv: startupEnv,
+    })
+
+    expect(result).toBeNull()
   })
 
   test('openai-compatible discovery applies mapModel to filter and shape raw entries', async () => {

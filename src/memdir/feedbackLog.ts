@@ -43,7 +43,7 @@ export async function logFeedbackEvent(
 
   const logLine = JSON.stringify(fullEvent) + '\n'
   try {
-    fs.appendFileSync(logPath, logLine, { encoding: 'utf8' })
+    fs.appendFileSync(logPath, logLine, { encoding: 'utf8' } as any)
   } catch (error) {
     // If append fails, silently catch or log to debug
   }
@@ -84,7 +84,7 @@ export async function clearFeedbackLog(keepLast = 50): Promise<void> {
     } catch {
       // Ignore
     }
-    fs.appendFileSync(logPath, logContent, { encoding: 'utf8' })
+    fs.appendFileSync(logPath, logContent, { encoding: 'utf8' } as any)
   } catch {
     // Silent catch
   }

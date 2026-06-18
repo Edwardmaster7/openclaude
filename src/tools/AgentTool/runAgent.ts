@@ -57,9 +57,9 @@ import { clearSessionHooks } from '../../utils/hooks/sessionHooks.js'
 import { executeSubagentStartHooks } from '../../utils/hooks.js'
 import { createUserMessage } from '../../utils/messages.js'
 import { getAgentModel } from '../../utils/model/agent.js'
-import { resolveAgentProvider } from '../../services/api/agentRouting.js'
+import { isModelAllowed } from '../../utils/model/modelAllowlist.js'
+import { resolveAgentRunModelRouting, shouldEnforceModelAllowlist } from '../../services/api/agentRouting.js'
 import { getInitialSettings } from '../../utils/settings/settings.js'
-import type { ModelAlias } from '../../utils/model/aliases.js'
 import {
   clearAgentTranscriptSubdir,
   recordSidechainTranscript,
@@ -265,6 +265,7 @@ export async function* runAgent({
   transcriptSubdir,
   onQueryProgress,
   agentName,
+  routingSubagentType,
 }: {
   agentDefinition: AgentDefinition
   promptMessages: Message[]
@@ -283,7 +284,7 @@ export async function* runAgent({
     abortController?: AbortController
     agentId?: AgentId
   }
-  model?: ModelAlias
+  model?: string
   maxTurns?: number
   /** Preserve toolUseResult on messages for subagents with viewable transcripts */
   preserveToolUseResults?: boolean
@@ -326,6 +327,11 @@ export async function* runAgent({
   onQueryProgress?: () => void
   /** Agent name (team member name) for routing resolution */
   agentName?: string
+  /** Routing key for per-agent provider resolution. In-process teammates build a
+   *  synthetic agentDefinition whose agentType is the teammate's display name,
+   *  which drops the original subagent_type that agentRouting is keyed on. Pass
+   *  the original subagent_type here so the configured route still resolves. */
+  routingSubagentType?: string
 }): AsyncGenerator<Message, void> {
   // Track subagent usage for feature discovery
 
@@ -345,12 +351,32 @@ export async function* runAgent({
   )
 
   // Resolve per-agent provider routing from settings
-  const providerOverride = resolveAgentProvider(
-    agentName,
-    agentDefinition.agentType,
-    getInitialSettings(),
-  )
-  const effectiveModel = providerOverride ? providerOverride.model : resolvedAgentModel
+  const settings = getInitialSettings()
+
+  const { mainLoopModel: effectiveModel, providerOverride } =
+    resolveAgentRunModelRouting({
+      resolvedAgentModel,
+      parentModel: toolUseContext.options.mainLoopModel,
+      toolSpecifiedModel: model,
+      agentName,
+      subagentType: routingSubagentType ?? agentDefinition.agentType,
+      agentDefinitionModel: agentDefinition.model,
+      settings,
+      permissionMode,
+    })
+
+  if (
+    shouldEnforceModelAllowlist(
+      resolvedAgentModel,
+      effectiveModel,
+      providerOverride !== undefined,
+    ) &&
+    !isModelAllowed(effectiveModel)
+  ) {
+    throw new Error(
+      `Model '${effectiveModel}' is not available. Your organization restricts model selection.`,
+    )
+  }
 
   const agentId = override?.agentId ? override.agentId : createAgentId()
 
@@ -360,7 +386,7 @@ export async function* runAgent({
     setAgentTranscriptSubdir(agentId, transcriptSubdir)
   }
 
-  
+
   // Log API calls path for subagents (internal-only)
   if (process.env.USER_TYPE === 'ant') {
     logForDebugging(
@@ -424,6 +450,7 @@ export async function* runAgent({
     if (
       agentPermissionMode &&
       state.toolPermissionContext.mode !== 'bypassPermissions' &&
+      state.toolPermissionContext.mode !== 'fullAccess' &&
       state.toolPermissionContext.mode !== 'acceptEdits' &&
       state.toolPermissionContext.mode !== 'dontAsk' &&
       !(
@@ -488,14 +515,21 @@ export async function* runAgent({
         ? agentDefinition.effort
         : state.effortValue
 
+    const modelStateChanged =
+      state.mainLoopModel !== effectiveModel ||
+      state.mainLoopModelForSession !== effectiveModel
+
     if (
       toolPermissionContext === state.toolPermissionContext &&
-      effortValue === state.effortValue
+      effortValue === state.effortValue &&
+      !modelStateChanged
     ) {
       return state
     }
     return {
       ...state,
+      mainLoopModel: effectiveModel,
+      mainLoopModelForSession: effectiveModel,
       toolPermissionContext,
       effortValue,
     }
@@ -515,7 +549,7 @@ export async function* runAgent({
         await getAgentSystemPrompt(
           agentDefinition,
           toolUseContext,
-          resolvedAgentModel,
+          effectiveModel,
           additionalWorkingDirectories,
           resolvedTools,
         ),
@@ -909,7 +943,7 @@ export function filterIncompleteToolCalls(messages: Message[]): Message[] {
 async function getAgentSystemPrompt(
   agentDefinition: AgentDefinition,
   toolUseContext: Pick<ToolUseContext, 'options'>,
-  resolvedAgentModel: string,
+  effectiveModel: string,
   additionalWorkingDirectories: string[],
   resolvedTools: readonly Tool[],
 ): Promise<string[]> {
@@ -920,14 +954,14 @@ async function getAgentSystemPrompt(
 
     return await enhanceSystemPromptWithEnvDetails(
       prompts,
-      resolvedAgentModel,
+      effectiveModel,
       additionalWorkingDirectories,
       enabledToolNames,
     )
   } catch (_error) {
     return enhanceSystemPromptWithEnvDetails(
       [DEFAULT_AGENT_PROMPT],
-      resolvedAgentModel,
+      effectiveModel,
       additionalWorkingDirectories,
       enabledToolNames,
     )

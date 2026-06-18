@@ -2,6 +2,7 @@ import { getGlobalConfig } from '../utils/config.js'
 import { scanMemoryFiles } from '../memdir/memoryScan.js'
 import { getAutoMemPath } from '../memdir/paths.js'
 import { getLevelInfo } from './progression.js'
+import { createCombinedAbortSignal } from '../utils/combinedAbortSignal.js'
 
 // ─── Error Tips (Level 2+) ──────────────────────────────────────────────────
 
@@ -456,29 +457,34 @@ export async function getFeedbackTip(
   if (Math.random() > chance) return null
 
   try {
-    const memories = await scanMemoryFiles(getAutoMemPath(), signal ?? AbortSignal.timeout(2000))
-    const feedbackRules = memories.filter(
-      m => m.type === 'feedback' && !m.ignored && (m.score ?? 0) >= 20,
-    )
+    const { signal: combinedSignal, cleanup } = createCombinedAbortSignal(signal, { timeoutMs: 2000 })
+    try {
+      const memories = await scanMemoryFiles(getAutoMemPath(), combinedSignal)
+      const feedbackRules = memories.filter(
+        m => m.type === 'feedback' && !m.ignored && (m.score ?? 0) >= 20,
+      )
 
-    if (feedbackRules.length === 0) return null
+      if (feedbackRules.length === 0) return null
 
-    if (context) {
-      const contextLower = context.toLowerCase()
-      const matched = feedbackRules.find(m => {
-        const desc = (m.description ?? '').toLowerCase()
-        const name = m.filename.toLowerCase()
-        const words = contextLower.split(/\s+/).filter(w => w.length > 3)
-        return words.some(w => desc.includes(w) || name.includes(w))
-      })
+      if (context) {
+        const contextLower = context.toLowerCase()
+        const matched = feedbackRules.find(m => {
+          const desc = (m.description ?? '').toLowerCase()
+          const name = m.filename.toLowerCase()
+          const words = contextLower.split(/\s+/).filter(w => w.length > 3)
+          return words.some(w => desc.includes(w) || name.includes(w))
+        })
 
-      if (matched) {
-        return `💡 Regra aprendida: ${matched.description ?? matched.filename}`
+        if (matched) {
+          return `💡 Regra aprendida: ${matched.description ?? matched.filename}`
+        }
       }
-    }
 
-    const picked = feedbackRules[Math.floor(Date.now() / 1000) % feedbackRules.length]!
-    return `💡 Regra aprendida: ${picked.description ?? picked.filename}`
+      const picked = feedbackRules[Math.floor(Date.now() / 1000) % feedbackRules.length]!
+      return `💡 Regra aprendida: ${picked.description ?? picked.filename}`
+    } finally {
+      cleanup()
+    }
   } catch {
     return null
   }

@@ -66,12 +66,10 @@ export function getNextPermissionMode(
         return 'auto'
       }
       return 'dontAsk'
-
     case 'auto':
       return 'dontAsk'
 
     case 'dontAsk':
-      // Not exposed in UI cycle yet, but return default if somehow reached
       return 'default'
 
     default:

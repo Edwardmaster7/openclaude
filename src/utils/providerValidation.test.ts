@@ -16,18 +16,24 @@ const ENV_KEYS = [
   'OPENAI_BASE_URL',
   'OPENAI_MODEL',
   'CODEX_API_KEY',
+  'CODEX_AUTH_JSON_PATH',
+  'CODEX_HOME',
   'CHATGPT_ACCOUNT_ID',
   'CODEX_ACCOUNT_ID',
   'CLAUDE_CODE_USE_GITHUB',
+  'GITHUB_COPILOT_KEY',
+  'GITHUB_ENTERPRISE_URL',
   'GITHUB_TOKEN',
   'GH_TOKEN',
   'CLAUDE_CODE_USE_GEMINI',
   'CLAUDE_CODE_USE_MISTRAL',
+  'CLAUDE_CODE_SIMPLE',
   'MISTRAL_API_KEY',
   'MINIMAX_API_KEY',
   'NVIDIA_API_KEY',
   'NVIDIA_NIM',
   'BNKR_API_KEY',
+  'OPENGATEWAY_API_KEY',
   'OPENROUTER_API_KEY',
   'DEEPSEEK_API_KEY',
   'MOONSHOT_API_KEY',
@@ -37,6 +43,9 @@ const ENV_KEYS = [
   'GEMINI_ACCESS_TOKEN',
   'GEMINI_AUTH_MODE',
   'GOOGLE_APPLICATION_CREDENTIALS',
+  'XAI_API_KEY',
+  'XAI_CREDENTIAL_SOURCE',
+  'NEARAI_API_KEY',
 ] as const
 
 const originalEnv: Record<string, string | undefined> = {}
@@ -125,6 +134,24 @@ test('openai missing key error includes recovery guidance and config locations',
   )
 })
 
+test('codex auth error redacts descriptor-declared provider secret values used as model text', async () => {
+  const providerSecret = 'ogw-provider-secret'
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.CLAUDE_CODE_SIMPLE = '1'
+  process.env.CODEX_AUTH_JSON_PATH = `/tmp/openclaude-provider-validation-missing-auth-${process.pid}.json`
+  process.env.OPENAI_BASE_URL = 'https://chatgpt.com/backend-api/codex'
+  process.env.OPENAI_MODEL = providerSecret
+  process.env.OPENGATEWAY_API_KEY = providerSecret
+  delete process.env.CODEX_API_KEY
+  delete process.env.CHATGPT_ACCOUNT_ID
+  delete process.env.CODEX_ACCOUNT_ID
+
+  const message = await getProviderValidationError(process.env)
+  expect(message).not.toBeNull()
+  expect(message!).toContain('Codex auth is required for ogw...ret')
+  expect(message!).not.toContain(providerSecret)
+})
+
 test('mistral validation is descriptor-backed and requires MISTRAL_API_KEY', async () => {
   process.env.CLAUDE_CODE_USE_MISTRAL = '1'
   delete process.env.MISTRAL_API_KEY
@@ -191,6 +218,78 @@ test('bankr validation accepts BNKR_API_KEY without OPENAI_API_KEY', async () =>
   await expect(getProviderValidationError(process.env)).resolves.toBeNull()
 })
 
+// xAI accepts either XAI_API_KEY (legacy) or OAuth credentials. The OAuth
+// credentials path is the saved-profile flow: applying the profile sets
+// XAI_CREDENTIAL_SOURCE=oauth in process.env, so validation must not
+// require XAI_API_KEY when that marker is present.
+test('xai validation accepts XAI_API_KEY without OPENAI_API_KEY', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'https://api.x.ai/v1'
+  process.env.OPENAI_MODEL = 'grok-4.3'
+  process.env.XAI_API_KEY = 'xai-live-key'
+  delete process.env.OPENAI_API_KEY
+
+  await expect(getProviderValidationError(process.env)).resolves.toBeNull()
+})
+
+test('xai validation accepts XAI_CREDENTIAL_SOURCE=oauth without an API key', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'https://api.x.ai/v1'
+  process.env.OPENAI_MODEL = 'grok-4.3'
+  process.env.XAI_CREDENTIAL_SOURCE = 'oauth'
+  delete process.env.XAI_API_KEY
+  delete process.env.OPENAI_API_KEY
+
+  await expect(getProviderValidationError(process.env)).resolves.toBeNull()
+})
+
+test('xai validation surfaces sign-in guidance when no credential source is set', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'https://api.x.ai/v1'
+  process.env.OPENAI_MODEL = 'grok-4.3'
+  delete process.env.XAI_API_KEY
+  delete process.env.XAI_CREDENTIAL_SOURCE
+  delete process.env.OPENAI_API_KEY
+
+  // Inject "no stored credentials" so this test isn't sensitive to the
+  // developer's actual login state.
+  const error = await getProviderValidationError(process.env, {
+    hasStoredXaiOAuthCredentials: async () => false,
+  })
+  expect(error).not.toBeNull()
+  expect(error!).toContain('XAI_API_KEY is required')
+  expect(error!).toContain('openclaude auth xai login')
+})
+
+test('xai validation accepts stored OAuth credentials even without an env marker', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'https://api.x.ai/v1'
+  process.env.OPENAI_MODEL = 'grok-4.3'
+  delete process.env.XAI_API_KEY
+  delete process.env.XAI_CREDENTIAL_SOURCE
+  delete process.env.OPENAI_API_KEY
+
+  await expect(
+    getProviderValidationError(process.env, {
+      hasStoredXaiOAuthCredentials: async () => true,
+    }),
+  ).resolves.toBeNull()
+})
+
+test('xai validation ignores unrelated XAI_CREDENTIAL_SOURCE values', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'https://api.x.ai/v1'
+  process.env.OPENAI_MODEL = 'grok-4.3'
+  process.env.XAI_CREDENTIAL_SOURCE = 'something-else'
+  delete process.env.XAI_API_KEY
+  delete process.env.OPENAI_API_KEY
+
+  const error = await getProviderValidationError(process.env, {
+    hasStoredXaiOAuthCredentials: async () => false,
+  })
+  expect(error).not.toBeNull()
+})
+
 test('openai validation does not accept unrelated minimax credentials', async () => {
   process.env.CLAUDE_CODE_USE_OPENAI = '1'
   process.env.OPENAI_BASE_URL = 'https://api.openai.com/v1'
@@ -240,9 +339,69 @@ test('xiaomi mimo validation accepts MIMO_API_KEY without OPENAI_API_KEY', async
   await expect(getProviderValidationError(process.env)).resolves.toBeNull()
 })
 
+test('nearai validation accepts NEARAI_API_KEY for cloud-api base URL', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'https://cloud-api.near.ai/v1'
+  process.env.NEARAI_API_KEY = 'nearai-live-key'
+  delete process.env.OPENAI_API_KEY
+
+  await expect(getProviderValidationError(process.env)).resolves.toBeNull()
+})
+
+test('nearai validation accepts NEARAI_API_KEY for wildcard TEE completions endpoint', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'https://qwen35-122b.completions.near.ai/v1'
+  process.env.NEARAI_API_KEY = 'nearai-tee-key'
+  delete process.env.OPENAI_API_KEY
+
+  await expect(getProviderValidationError(process.env)).resolves.toBeNull()
+})
+
+test('opengateway validation fails without OPENGATEWAY_API_KEY or OPENAI_API_KEY', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'https://opengateway.gitlawb.com/v1'
+  delete process.env.OPENAI_API_KEY
+  delete process.env.OPENGATEWAY_API_KEY
+
+  const error = await getProviderValidationError(process.env)
+  expect(error).not.toBeNull()
+  expect(error!).toContain('OPENGATEWAY_API_KEY')
+})
+
+test('opengateway validation passes when OPENGATEWAY_API_KEY is set', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'https://opengateway.gitlawb.com/v1'
+  process.env.OPENGATEWAY_API_KEY = 'ogw_live_test_0000000000000000'
+  delete process.env.OPENAI_API_KEY
+
+  await expect(getProviderValidationError(process.env)).resolves.toBeNull()
+})
+
+test('opengateway validation accepts OPENAI_API_KEY as fallback', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'https://opengateway.gitlawb.com/v1'
+  process.env.OPENAI_API_KEY = 'ogw_live_test_0000000000000000'
+  delete process.env.OPENGATEWAY_API_KEY
+
+  await expect(getProviderValidationError(process.env)).resolves.toBeNull()
+})
+
+test('opengateway validation still requires a key on the model-specific path', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'https://opengateway.gitlawb.com/v1/xiaomi-mimo'
+  delete process.env.OPENAI_API_KEY
+  delete process.env.OPENGATEWAY_API_KEY
+
+  const error = await getProviderValidationError(process.env)
+  expect(error).not.toBeNull()
+  expect(error!).toContain('OPENGATEWAY_API_KEY')
+})
+
 test('github validation stays descriptor-selected and reports missing auth', async () => {
   process.env.CLAUDE_CODE_USE_GITHUB = '1'
   delete process.env.CLAUDE_CODE_USE_OPENAI
+  delete process.env.GITHUB_ENTERPRISE_URL
+  delete process.env.OPENAI_BASE_URL
   delete process.env.GITHUB_TOKEN
   delete process.env.GH_TOKEN
 
@@ -251,6 +410,43 @@ test('github validation stays descriptor-selected and reports missing auth', asy
       'Run /onboard-github in the CLI to sign in with your GitHub account.\n' +
       'This will store your OAuth token securely and enable Copilot models.',
   )
+})
+
+test('github enterprise validation reports Enterprise auth guidance when Enterprise URL is set', async () => {
+  process.env.CLAUDE_CODE_USE_GITHUB = '1'
+  process.env.GITHUB_ENTERPRISE_URL = 'https://github.mycompany.com'
+  delete process.env.CLAUDE_CODE_USE_OPENAI
+  delete process.env.GITHUB_COPILOT_KEY
+  delete process.env.GITHUB_TOKEN
+  delete process.env.GH_TOKEN
+
+  await expect(getProviderValidationError(process.env)).resolves.toBe(
+    'GitHub Copilot Enterprise authentication required.\n' +
+      'Set GITHUB_ENTERPRISE_URL to your GHE instance URL (e.g. https://github.mycompany.com).\n' +
+      'Then run /onboard-github to sign in, or set GITHUB_COPILOT_KEY for direct API key auth.',
+  )
+})
+
+test('github enterprise validation accepts PAT when Enterprise URL is set without OPENAI_BASE_URL', async () => {
+  process.env.CLAUDE_CODE_USE_GITHUB = '1'
+  process.env.GITHUB_ENTERPRISE_URL = 'https://github.mycompany.com'
+  process.env.GITHUB_TOKEN = 'ghp_enterprisepat'
+  delete process.env.CLAUDE_CODE_USE_OPENAI
+  delete process.env.OPENAI_BASE_URL
+  delete process.env.GH_TOKEN
+
+  await expect(getProviderValidationError(process.env)).resolves.toBeNull()
+})
+
+test('github enterprise validation accepts a direct Copilot key without token validation', async () => {
+  process.env.CLAUDE_CODE_USE_GITHUB = '1'
+  process.env.GITHUB_ENTERPRISE_URL = 'https://github.mycompany.com'
+  process.env.GITHUB_COPILOT_KEY = 'enterprise-direct-key'
+  delete process.env.CLAUDE_CODE_USE_OPENAI
+  delete process.env.GITHUB_TOKEN
+  delete process.env.GH_TOKEN
+
+  await expect(getProviderValidationError(process.env)).resolves.toBeNull()
 })
 
 test('github validation is skipped when openai mode is also active', async () => {
@@ -264,6 +460,41 @@ test('github validation is skipped when openai mode is also active', async () =>
   const error = await getProviderValidationError(process.env)
   expect(error).not.toBeNull()
   expect(error!).toContain(
+    'OPENAI_API_KEY is required when CLAUDE_CODE_USE_OPENAI=1 and OPENAI_BASE_URL is not local.',
+  )
+})
+
+test('remote Ollama by hostname does not require OPENAI_API_KEY (#369)', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'http://my-ollama-server.example.com:11434/v1'
+  delete process.env.OPENAI_API_KEY
+
+  await expect(getProviderValidationError(process.env)).resolves.toBeNull()
+})
+
+test('remote Ollama on default port without API key is allowed (#369)', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'http://203.0.113.5:11434/v1'
+  delete process.env.OPENAI_API_KEY
+
+  await expect(getProviderValidationError(process.env)).resolves.toBeNull()
+})
+
+test('remote Ollama identified by "ollama" in hostname is allowed without key (#369)', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'https://ollama.corp.example.com/v1'
+  delete process.env.OPENAI_API_KEY
+
+  await expect(getProviderValidationError(process.env)).resolves.toBeNull()
+})
+
+test('non-Ollama remote provider still requires OPENAI_API_KEY', async () => {
+  process.env.CLAUDE_CODE_USE_OPENAI = '1'
+  process.env.OPENAI_BASE_URL = 'https://api.openai.com/v1'
+  delete process.env.OPENAI_API_KEY
+
+  const message = await getProviderValidationError(process.env)
+  expect(message).toContain(
     'OPENAI_API_KEY is required when CLAUDE_CODE_USE_OPENAI=1 and OPENAI_BASE_URL is not local.',
   )
 })

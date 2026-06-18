@@ -224,6 +224,13 @@ export default class App extends PureComponent<Props, State> {
     }
     stdin.setEncoding('utf8');
     if (isEnabled) {
+      // Guard against negative count from async races or effect cleanup bugs.
+      // If count is negative, reset to 0 so setup runs on this enable.
+      if (this.rawModeEnabledCount < 0) {
+        logForDebugging(`handleSetRawMode: recovering rawModeEnabledCount from ${this.rawModeEnabledCount} to 0`);
+        this.rawModeEnabledCount = 0;
+      }
+
       // Ensure raw mode is enabled only once
       if (this.rawModeEnabledCount === 0) {
         // Stop early input capture right before we add our own readable handler.
@@ -235,10 +242,10 @@ export default class App extends PureComponent<Props, State> {
         stdin.setRawMode(true);
         if (this.stdinMode === 'data') {
           stdin.addListener('data', this.handleDataChunk);
+          stdin.resume();
         } else {
           stdin.addListener('readable', this.handleReadable);
         }
-        stdin.resume();
         // Enable bracketed paste mode
         this.props.stdout.write(EBP);
         // Enable terminal focus reporting (DECSET 1004)
@@ -272,6 +279,13 @@ export default class App extends PureComponent<Props, State> {
         });
       }
       this.rawModeEnabledCount++;
+      return;
+    }
+
+    // Guard against unbalanced disable calls (e.g. from rapid mount/unmount
+    // during MCP-driven re-renders). Prevent count from going negative.
+    if (this.rawModeEnabledCount <= 0) {
+      logForDebugging(`handleSetRawMode: ignoring disable call with count=${this.rawModeEnabledCount}`);
       return;
     }
 

@@ -105,6 +105,10 @@ type State = {
   useCoworkPlugins: boolean
   // Session-only bypass permissions mode flag (not persisted)
   sessionBypassPermissionsMode: boolean
+  // Session startup dangerous permission mode for integrations that need to
+  // preserve the distinction between bypassPermissions and fullAccess before
+  // the app is fully mounted.
+  sessionDangerousPermissionMode: 'bypassPermissions' | 'fullAccess' | null
   // Session-only flag gating the .claude/scheduled_tasks.json watcher
   // (useScheduledTasks). Set by cronScheduler.start() when the JSON has
   // entries, or by CronCreateTool. Not persisted.
@@ -313,6 +317,7 @@ function getInitialState(): State {
     useCoworkPlugins: false,
     // Session-only bypass permissions mode flag (not persisted)
     sessionBypassPermissionsMode: false,
+    sessionDangerousPermissionMode: null,
     // Scheduled tasks disabled until flag or dialog enables them
     scheduledTasksEnabled: false,
     sessionCronTasks: [],
@@ -392,7 +397,7 @@ const STATE: State = getInitialState()
  *
  * **Runtime Requirement:** Uses Node.js `async_hooks.AsyncLocalStorage`.
  * Not available in browsers or non-Node JavaScript environments.
- * SDK consumers must run in a Node.js runtime (Node.js 12.17.0+ or 14.0.0+).
+ * SDK consumers must run in OpenClaude's supported Node.js runtime (>=22.0.0).
  */
 type SdkContext = {
   sessionId: SessionId
@@ -514,7 +519,7 @@ export const onSessionSwitch = sessionSwitched.subscribe
  */
 export function getSessionProjectDir(): string | null {
   const ctx = getSdkContext()
-  return ctx?.sessionProjectDir ?? STATE.sessionProjectDir
+  return ctx ? ctx.sessionProjectDir : STATE.sessionProjectDir
 }
 
 export function getOriginalCwd(): string {
@@ -1190,6 +1195,19 @@ export function setSessionBypassPermissionsMode(enabled: boolean): void {
 
 export function getSessionBypassPermissionsMode(): boolean {
   return STATE.sessionBypassPermissionsMode
+}
+
+export function setSessionDangerousPermissionMode(
+  mode: 'bypassPermissions' | 'fullAccess' | null,
+): void {
+  STATE.sessionDangerousPermissionMode = mode
+}
+
+export function getSessionDangerousPermissionMode():
+  | 'bypassPermissions'
+  | 'fullAccess'
+  | null {
+  return STATE.sessionDangerousPermissionMode
 }
 
 export function setScheduledTasksEnabled(enabled: boolean): void {

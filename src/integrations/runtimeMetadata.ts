@@ -3,9 +3,14 @@ import type {
   OpenAIShimTransportConfig,
 } from './descriptors.js'
 import {
-  getOpenAIContextWindow,
-  getOpenAIMaxOutputTokens,
+  getOpenAIContextWindowMatches,
+  getOpenAIMaxOutputTokenMatches,
 } from '../utils/model/openaiContextWindows.js'
+import { getCachedModelsSync } from './discoveryCache.js'
+import {
+  getDiscoveryCacheKey,
+  getDiscoveryCacheTtlMs,
+} from './discoveryService.js'
 import { ensureIntegrationsLoaded } from './index.js'
 import {
   getAllModels,
@@ -14,10 +19,12 @@ import {
 } from './registry.js'
 import {
   getRouteDescriptor,
+  resolveRouteCredentialValue,
   resolveActiveRouteIdFromEnv,
   resolveRouteIdFromBaseUrl,
   type RouteDescriptor,
 } from './routeMetadata.js'
+import { parseCustomHeadersEnv } from '../utils/providerCustomHeaders.js'
 
 function normalizeModelApiName(
   value: string | undefined,
@@ -142,7 +149,20 @@ function inferRemoteModelOpenAIShimConfig(
     return undefined
   }
 
-  if (normalizedModel.includes('deepseek')) {
+  if (normalizedModel.startsWith('mimo-v2')) {
+    return {
+      preserveReasoningContent: true,
+      requireReasoningContentOnAssistantMessages: true,
+      maxTokensField: 'max_completion_tokens',
+      removeBodyFields: ['store', 'stream_options'],
+    }
+  }
+
+  // Segment-boundary-aware matcher: avoids false-positives like "my-deepseek-rag"
+  // while still catching aggregator paths e.g. "openrouter/deepseek/deepseek-chat".
+  const segments = normalizedModel.split('/')
+  const hasDeepseek = segments.some(s => s.startsWith('deepseek'))
+  if (hasDeepseek) {
     return {
       preserveReasoningContent: true,
       requireReasoningContentOnAssistantMessages: true,
@@ -153,7 +173,10 @@ function inferRemoteModelOpenAIShimConfig(
     }
   }
 
-  if (normalizedModel.includes('kimi') || normalizedModel.includes('moonshot')) {
+   const hasKimiMoonshot = segments.some(
+     s => s.startsWith('kimi') || s.startsWith('moonshot'),
+   )
+   if (hasKimiMoonshot) {
     return {
       preserveReasoningContent: true,
       requireReasoningContentOnAssistantMessages: true,
@@ -313,6 +336,40 @@ function findCatalogEntryForApiName(
   return getCatalogEntryForModel(routeId, modelApiName)
 }
 
+function findCachedCatalogEntryForApiName(
+  routeId: string | null,
+  modelApiName: string | undefined,
+  runtimeEnv: NodeJS.ProcessEnv,
+): ModelCatalogEntry | null {
+  const normalizedModel = normalizeModelApiName(modelApiName)
+  if (!routeId || routeId === 'anthropic' || !normalizedModel) {
+    return null
+  }
+
+  const catalog = getRouteDescriptor(routeId)?.catalog
+  if (!catalog?.discovery) {
+    return null
+  }
+
+  const baseUrl = runtimeEnv.OPENAI_BASE_URL ?? runtimeEnv.OPENAI_API_BASE
+  const cacheKey = getDiscoveryCacheKey(routeId, {
+    baseUrl,
+    apiKey: resolveRouteCredentialValue({
+      routeId,
+      baseUrl,
+      processEnv: runtimeEnv,
+    }),
+    headers: parseCustomHeadersEnv(runtimeEnv.ANTHROPIC_CUSTOM_HEADERS),
+  })
+  const cached = getCachedModelsSync(cacheKey, getDiscoveryCacheTtlMs(routeId))
+
+  return (
+    cached?.models.find(entry =>
+      matchesCatalogEntryModel(routeId, entry, normalizedModel),
+    ) ?? null
+  )
+}
+
 export function resolveModelRuntimeLimits(options: {
   model: string
   processEnv?: NodeJS.ProcessEnv
@@ -329,23 +386,36 @@ export function resolveModelRuntimeLimits(options: {
     activeProfileProvider: options.activeProfileProvider,
   })
   const catalogEntry = findCatalogEntryForApiName(routeId, options.model)
+  const cachedCatalogEntry = findCachedCatalogEntryForApiName(
+    routeId,
+    options.model,
+    runtimeEnv,
+  )
   const modelDescriptor =
     getModelDescriptorForCatalogEntry(catalogEntry) ??
+    getModelDescriptorForCatalogEntry(cachedCatalogEntry) ??
     findModelDescriptorForApiName(routeId, options.model)
-  const externalContextWindow = getOpenAIContextWindow(options.model, runtimeEnv)
-  const externalMaxOutputTokens = getOpenAIMaxOutputTokens(
+  const externalContextWindow = getOpenAIContextWindowMatches(
+    options.model,
+    runtimeEnv,
+  )
+  const externalMaxOutputTokens = getOpenAIMaxOutputTokenMatches(
     options.model,
     runtimeEnv,
   )
 
   return {
     contextWindow:
-      externalContextWindow ??
+      externalContextWindow.exact ??
       catalogEntry?.contextWindow ??
+      cachedCatalogEntry?.contextWindow ??
+      externalContextWindow.prefix ??
       modelDescriptor?.contextWindow,
     maxOutputTokens:
-      externalMaxOutputTokens ??
+      externalMaxOutputTokens.exact ??
       catalogEntry?.maxOutputTokens ??
+      cachedCatalogEntry?.maxOutputTokens ??
+      externalMaxOutputTokens.prefix ??
       modelDescriptor?.maxOutputTokens,
   }
 }

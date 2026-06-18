@@ -5,9 +5,12 @@ import { join } from 'node:path'
 import test, { afterEach, beforeEach } from 'node:test'
 
 import { acquireEnvMutex, releaseEnvMutex } from '../entrypoints/sdk/shared.js'
+import { resolveActiveRouteIdFromEnv } from '../integrations/routeMetadata.js'
 import { DEFAULT_CODEX_BASE_URL } from '../services/api/providerConfig.js'
+import { getProviderValidationError } from './providerValidation.js'
 import {
   applySavedProfileToCurrentSession,
+  applyStartupEnvFromProfile,
   buildStartupEnvFromProfile,
   buildAtomicChatProfileEnv,
   buildCodexProfileEnv,
@@ -19,6 +22,7 @@ import {
   createProfileFile,
   deleteProfileFile,
   getDefaultProfileFilePath,
+  isDefaultStartupProviderEnv,
   isPersistedCodexOAuthProfile,
   maskSecretForDisplay,
   loadProfileFile,
@@ -168,6 +172,76 @@ test('openai launch omits api key when no key is resolved', async () => {
   assert.equal(Object.hasOwn(env, 'OPENAI_API_KEY'), false)
 })
 
+test('github-enterprise launch does not derive Enterprise URL from public Copilot default', async () => {
+  const env = await buildLaunchEnv({
+    profile: 'github-enterprise',
+    persisted: profile('github-enterprise', {
+      OPENAI_BASE_URL: 'https://api.githubcopilot.com',
+      OPENAI_MODEL: 'github:copilot:gpt-5.3-codex',
+    }),
+    goal: 'coding',
+    processEnv: {},
+  })
+
+  assert.equal(env.CLAUDE_CODE_USE_GITHUB, '1')
+  assert.equal(env.OPENAI_BASE_URL, 'https://api.githubcopilot.com')
+  assert.equal(env.GITHUB_ENTERPRISE_URL, undefined)
+})
+
+test('github-enterprise launch preserves persisted direct Copilot key', async () => {
+  const env = await buildLaunchEnv({
+    profile: 'github-enterprise',
+    persisted: profile('github-enterprise', {
+      OPENAI_BASE_URL: 'https://github.mycompany.com/api/copilot',
+      OPENAI_MODEL: 'github:copilot:gpt-5.3-codex',
+      GITHUB_COPILOT_KEY: 'enterprise-profile-key',
+    }),
+    goal: 'coding',
+    processEnv: {},
+  })
+
+  assert.equal(env.CLAUDE_CODE_USE_GITHUB, '1')
+  assert.equal(env.GITHUB_ENTERPRISE_URL, 'https://github.mycompany.com')
+  assert.equal(env.GITHUB_COPILOT_KEY, 'enterprise-profile-key')
+})
+
+test('openai launch preserves persisted dedicated vendor credentials across restart', async () => {
+  const env = await buildLaunchEnv({
+    profile: 'openai',
+    persisted: profile('openai', {
+      OPENAI_BASE_URL: 'https://api.atlascloud.ai/v1',
+      OPENAI_MODEL: 'deepseek-ai/deepseek-v4-pro',
+      OPENAI_API_KEY: 'atlas-secret-key',
+      ATLAS_CLOUD_API_KEY: 'atlas-secret-key',
+    }),
+    goal: 'coding',
+    processEnv: {},
+  })
+
+  assert.equal(env.OPENAI_BASE_URL, 'https://api.atlascloud.ai/v1')
+  assert.equal(env.OPENAI_MODEL, 'deepseek-ai/deepseek-v4-pro')
+  assert.equal(env.OPENAI_API_KEY, 'atlas-secret-key')
+  assert.equal(env.ATLAS_CLOUD_API_KEY, 'atlas-secret-key')
+})
+
+test('openai launch prefers a live dedicated vendor key over the persisted one', async () => {
+  const env = await buildLaunchEnv({
+    profile: 'openai',
+    persisted: profile('openai', {
+      OPENAI_BASE_URL: 'https://api.atlascloud.ai/v1',
+      OPENAI_MODEL: 'deepseek-ai/deepseek-v4-pro',
+      OPENAI_API_KEY: 'atlas-old-key',
+      ATLAS_CLOUD_API_KEY: 'atlas-old-key',
+    }),
+    goal: 'coding',
+    processEnv: {
+      ATLAS_CLOUD_API_KEY: 'atlas-rotated-key',
+    },
+  })
+
+  assert.equal(env.ATLAS_CLOUD_API_KEY, 'atlas-rotated-key')
+})
+
 test('xai launch uses descriptor defaults and persisted xAI key', async () => {
   const env = await buildLaunchEnv({
     profile: 'xai',
@@ -239,6 +313,143 @@ test('openai launch ignores codex persisted transport hints', async () => {
   assert.equal(env.OPENAI_BASE_URL, 'https://api.openai.com/v1')
   assert.equal(env.OPENAI_MODEL, 'gpt-5.5')
   assert.equal(env.OPENAI_API_KEY, 'sk-live')
+})
+
+test('buildStartupEnvFromProfile defaults fresh installs to Gitlawb Opengateway', async () => {
+  const env = await buildStartupEnvFromProfile({
+    persisted: null,
+    processEnv: {},
+  })
+
+  assert.equal(env.CLAUDE_CODE_USE_OPENAI, '1')
+  assert.equal(env.OPENAI_BASE_URL, 'https://opengateway.gitlawb.com/v1')
+  assert.equal(env.OPENAI_MODEL, 'mimo-v2.5-pro')
+  assert.equal(isDefaultStartupProviderEnv(env), true)
+})
+
+test('buildStartupEnvFromProfile fresh-install OpenGateway env is invalid without an API key (issue #1651)', async () => {
+  const env = await buildStartupEnvFromProfile({
+    persisted: null,
+    processEnv: {},
+  })
+
+  assert.equal(isDefaultStartupProviderEnv(env), true)
+  const error = await getProviderValidationError(env)
+  assert.notEqual(error, null)
+  assert.ok(error!.includes('OPENGATEWAY_API_KEY'))
+})
+
+test('applyStartupEnvFromProfile ignores invalid startup env and warns (issue #1651)', async () => {
+  const processEnv: NodeJS.ProcessEnv = {}
+  const warnings: string[] = []
+
+  const error = await applyStartupEnvFromProfile({
+    persisted: null,
+    processEnv,
+    onValidationError: message => warnings.push(message),
+  })
+
+  assert.notEqual(error, null)
+  assert.ok(error!.includes('OPENGATEWAY_API_KEY'))
+  assert.deepEqual(warnings, [
+    `Warning: ignoring saved provider profile. ${error}`,
+  ])
+  assert.deepEqual(processEnv, {})
+})
+
+test('applyStartupEnvFromProfile applies valid startup env (issue #1651)', async () => {
+  const processEnv: NodeJS.ProcessEnv = {
+    OPENGATEWAY_API_KEY: 'test-key',
+  }
+  const warnings: string[] = []
+
+  const error = await applyStartupEnvFromProfile({
+    persisted: null,
+    processEnv,
+    onValidationError: message => warnings.push(message),
+  })
+
+  assert.equal(error, null)
+  assert.deepEqual(warnings, [])
+  assert.equal(processEnv.CLAUDE_CODE_USE_OPENAI, '1')
+  assert.equal(processEnv.OPENAI_BASE_URL, 'https://opengateway.gitlawb.com/v1')
+  assert.equal(processEnv.OPENAI_MODEL, 'mimo-v2.5-pro')
+  assert.equal(processEnv.OPENGATEWAY_API_KEY, 'test-key')
+})
+
+test('buildStartupEnvFromProfile preserves explicit OpenAI-compatible env without a saved profile', async () => {
+  const env = await buildStartupEnvFromProfile({
+    persisted: null,
+    processEnv: {
+      CLAUDE_CODE_USE_OPENAI: '1',
+      OPENAI_API_KEY: 'sk-live',
+      OPENAI_BASE_URL: 'http://common.example.com/v1',
+      OPENAI_MODEL: 'gemma-4-31B-it',
+    },
+  })
+
+  assert.equal(env.CLAUDE_CODE_USE_OPENAI, '1')
+  assert.equal(env.OPENAI_API_KEY, 'sk-live')
+  assert.equal(env.OPENAI_BASE_URL, 'http://common.example.com/v1')
+  assert.equal(env.OPENAI_MODEL, 'gemma-4-31B-it')
+  assert.equal(resolveActiveRouteIdFromEnv(env), 'custom')
+  assert.equal(isDefaultStartupProviderEnv(env), false)
+})
+
+test('buildStartupEnvFromProfile respects an explicit CLAUDE_CODE_USE_OPENAI=0 opt-out (issue #1245)', async () => {
+  const env = await buildStartupEnvFromProfile({
+    persisted: null,
+    processEnv: {
+      CLAUDE_CODE_USE_OPENAI: '0',
+    },
+  })
+
+  // The explicit opt-out must be preserved and the default Opengateway
+  // profile must NOT be injected over it.
+  assert.equal(env.CLAUDE_CODE_USE_OPENAI, '0')
+  assert.equal(env.OPENAI_BASE_URL, undefined)
+  assert.equal(env.OPENAI_MODEL, undefined)
+  assert.equal(isDefaultStartupProviderEnv(env), false)
+
+  // With OpenAI disabled and no provider configured, startup must not emit a
+  // spurious "OPENAI_API_KEY is required" warning.
+  assert.equal(await getProviderValidationError(env), null)
+})
+
+test('buildStartupEnvFromProfile preserves env-only Fireworks setup without a saved profile', async () => {
+  const env = await buildStartupEnvFromProfile({
+    persisted: null,
+    processEnv: {
+      FIREWORKS_API_KEY: 'fw-key',
+    },
+  })
+
+  // Must NOT fall through to Gitlawb Opengateway default
+  assert.equal(env.FIREWORKS_API_KEY, 'fw-key')
+  assert.equal(env.CLAUDE_CODE_USE_OPENAI, undefined)
+  assert.equal(
+    env.OPENAI_BASE_URL,
+    undefined,
+    'should not inject Gitlawb Opengateway base URL',
+  )
+  assert.equal(isDefaultStartupProviderEnv(env), false)
+})
+
+test('buildStartupEnvFromProfile preserves env-only NEAR AI setup without a saved profile', async () => {
+  const env = await buildStartupEnvFromProfile({
+    persisted: null,
+    processEnv: {
+      NEARAI_API_KEY: 'nearai-key',
+    },
+  })
+
+  assert.equal(env.NEARAI_API_KEY, 'nearai-key')
+  assert.equal(
+    env.OPENAI_BASE_URL,
+    undefined,
+    'should not inject Gitlawb Opengateway base URL',
+  )
+  assert.equal(isDefaultStartupProviderEnv(env), false)
 })
 
 test('openai launch preserves shell responses format and custom auth overrides', async () => {
@@ -485,6 +696,82 @@ test('codex profiles require a chatgpt account id', () => {
   assert.equal(env, null)
 })
 
+// Regression: a user with `OPENAI_API_KEY=sk-openai-…` in their shell
+// who signs into xAI OAuth previously had that generic OpenAI key
+// promoted into both OPENAI_API_KEY and XAI_API_KEY for the xAI
+// profile, dropping XAI_CREDENTIAL_SOURCE. openaiShim then sent the
+// OpenAI key as a Bearer to api.x.ai/v1 — wrong account, wrong key,
+// 401 (and leaks the OpenAI key to xAI). Marker-tagged xAI OAuth
+// profiles must ignore generic OpenAI credentials entirely.
+test('xai OAuth profile ignores ambient OPENAI_API_KEY and preserves marker', async () => {
+  const env = await buildLaunchEnv({
+    profile: 'xai',
+    persisted: profile('xai', {
+      OPENAI_BASE_URL: 'https://api.x.ai/v1',
+      OPENAI_MODEL: 'grok-4.3',
+      XAI_CREDENTIAL_SOURCE: 'oauth',
+    }),
+    goal: 'balanced',
+    processEnv: {
+      OPENAI_API_KEY: 'sk-openai-shell-key',
+    },
+  })
+
+  // Marker survives so startup validation accepts the profile.
+  assert.equal(env.XAI_CREDENTIAL_SOURCE, 'oauth')
+  // OpenAI key is NOT promoted into the xAI bearer surface.
+  assert.equal(env.XAI_API_KEY, undefined)
+  // openaiShim short-circuits on OPENAI_API_KEY before checking the
+  // stored OAuth token, so it must also be cleared from the resulting
+  // process env (clearManagedProfileEnv + no promotion in profileEnv).
+  assert.equal(env.OPENAI_API_KEY, undefined)
+  // Base URL and model still come through.
+  assert.equal(env.OPENAI_BASE_URL, 'https://api.x.ai/v1')
+  assert.equal(env.OPENAI_MODEL, 'grok-4.3')
+})
+
+test('xai OAuth profile still honors an explicit XAI_API_KEY override', async () => {
+  const env = await buildLaunchEnv({
+    profile: 'xai',
+    persisted: profile('xai', {
+      OPENAI_BASE_URL: 'https://api.x.ai/v1',
+      OPENAI_MODEL: 'grok-4.3',
+      XAI_CREDENTIAL_SOURCE: 'oauth',
+    }),
+    goal: 'balanced',
+    processEnv: {
+      XAI_API_KEY: 'xai-explicit-override',
+      OPENAI_API_KEY: 'sk-openai-shell-key',
+    },
+  })
+
+  // Explicit XAI_API_KEY wins; the OAuth marker drops because we have
+  // a concrete bearer to send.
+  assert.equal(env.XAI_API_KEY, 'xai-explicit-override')
+  assert.equal(env.OPENAI_API_KEY, 'xai-explicit-override')
+  assert.equal(env.XAI_CREDENTIAL_SOURCE, undefined)
+})
+
+test('xai non-OAuth profile (legacy api-key flow) still accepts OPENAI_API_KEY fallback', async () => {
+  // Backward-compat: an xAI profile saved before the OAuth flow existed
+  // (no XAI_CREDENTIAL_SOURCE marker) used to inherit OPENAI_API_KEY
+  // for one-off connections. Don't break that path.
+  const env = await buildLaunchEnv({
+    profile: 'xai',
+    persisted: profile('xai', {
+      OPENAI_BASE_URL: 'https://api.x.ai/v1',
+      OPENAI_MODEL: 'grok-4.3',
+    }),
+    goal: 'balanced',
+    processEnv: {
+      OPENAI_API_KEY: 'xai-disguised-as-openai-key',
+    },
+  })
+
+  assert.equal(env.XAI_API_KEY, 'xai-disguised-as-openai-key')
+  assert.equal(env.OPENAI_API_KEY, 'xai-disguised-as-openai-key')
+})
+
 test('codex launch clears openai-compatible format and custom auth env', async () => {
   const env = await buildLaunchEnv({
     profile: 'codex',
@@ -617,8 +904,10 @@ test('saveProfileFile defaults to user config instead of the working directory',
     assert.equal(filePath, join(configDir, PROFILE_FILE_NAME))
     assert.equal(getDefaultProfileFilePath(configDir), join(configDir, PROFILE_FILE_NAME))
     assert.equal(existsSync(join(cwd, PROFILE_FILE_NAME)), false)
+    const configDirStat = statSync(configDir)
+    assert.equal(configDirStat.isDirectory(), true)
     if (process.platform !== 'win32') {
-      assert.equal(statSync(configDir).mode & 0o777, 0o700)
+      assert.equal(configDirStat.mode & 0o777, 0o700)
     }
     assert.deepEqual(loadProfileFile({ configDir, cwd }), persisted)
   } finally {
@@ -880,6 +1169,7 @@ test('clearPersistedCodexOAuthProfile clears both default and legacy OAuth profi
     })
 
     saveProfileFileFresh(oauthProfile, { configDir })
+    assert.deepEqual(loadProfileFileFresh({ configDir, cwd }), oauthProfile)
     writeFileSync(
       join(cwd, freshProfileFileName),
       JSON.stringify(oauthProfile, null, 2),
@@ -968,13 +1258,11 @@ test('buildStartupEnvFromProfile leaves explicit provider selections untouched',
     processEnv,
   })
 
-  // Remove the strict object equality check: assert.equal(env, processEnv)
   assert.equal(env.CLAUDE_CODE_USE_GEMINI, '1')
   assert.equal(env.GEMINI_API_KEY, 'gem-live')
   assert.equal(env.GEMINI_MODEL, 'gemini-2.0-flash')
-  // Add the new default fields injected by the function
-  assert.equal(env.GEMINI_BASE_URL, 'https://generativelanguage.googleapis.com/v1beta/openai')
-  assert.equal(env.GEMINI_AUTH_MODE, 'api-key')
+  assert.equal(env.GEMINI_BASE_URL, undefined)
+  assert.equal(env.GEMINI_AUTH_MODE, undefined)
   assert.equal(env.OPENAI_API_KEY, undefined)
 })
 
@@ -1186,7 +1474,7 @@ test('buildStartupEnvFromProfile preserves plural-profile env when the legacy fi
   assert.equal(env.CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED_ID, 'saved_moonshot')
 })
 
-test('buildStartupEnvFromProfile ignores the legacy file when a configured provider profile already selected a concrete env', async () => {
+test('buildStartupEnvFromProfile ignores the legacy file when startup already has concrete env', async () => {
   const processEnv: NodeJS.ProcessEnv = {
     CLAUDE_CODE_USE_OPENAI: '1',
     OPENAI_BASE_URL: 'https://api.moonshot.ai/v1',
@@ -1200,7 +1488,6 @@ test('buildStartupEnvFromProfile ignores the legacy file when a configured provi
       OPENAI_BASE_URL: 'https://api.sambanova.ai/v1',
     }),
     processEnv,
-    hasConfiguredProviderProfile: true,
   })
 
   assert.equal(env, processEnv)
@@ -1232,7 +1519,7 @@ test('buildStartupEnvFromProfile falls back to legacy file when plural system ha
   assert.equal(env.OPENAI_MODEL, 'gpt-4o')
 })
 
-test('buildStartupEnvFromProfile still falls back to the legacy file when configured profiles exist but startup env is incomplete', async () => {
+test('buildStartupEnvFromProfile falls back to the legacy file when startup env is incomplete', async () => {
   const processEnv = {
     CLAUDE_CODE_USE_OPENAI: '1',
   }
@@ -1244,7 +1531,6 @@ test('buildStartupEnvFromProfile still falls back to the legacy file when config
       OPENAI_BASE_URL: 'https://api.openai.com/v1',
     }),
     processEnv,
-    hasConfiguredProviderProfile: true,
   })
 
   assert.notEqual(env, processEnv)
@@ -1253,7 +1539,7 @@ test('buildStartupEnvFromProfile still falls back to the legacy file when config
   assert.equal(env.OPENAI_MODEL, 'gpt-4o')
 })
 
-test('buildStartupEnvFromProfile ignores falsey provider flags when deciding whether a configured profile already selected startup env', async () => {
+test('buildStartupEnvFromProfile ignores falsey provider flags when deciding whether startup env is concrete', async () => {
   const processEnv = {
     CLAUDE_CODE_USE_OPENAI: '0',
     OPENAI_BASE_URL: 'https://api.stale.example/v1',
@@ -1267,7 +1553,6 @@ test('buildStartupEnvFromProfile ignores falsey provider flags when deciding whe
       OPENAI_BASE_URL: 'https://api.openai.com/v1',
     }),
     processEnv,
-    hasConfiguredProviderProfile: true,
   })
 
   assert.notEqual(env, processEnv)
@@ -1446,6 +1731,24 @@ test('startup env normalizes a semicolon-separated persisted openai model list',
   assert.equal(env.OPENAI_API_KEY, 'sk-live')
   assert.equal(env.OPENAI_MODEL, 'gpt-5.4')
   assert.equal(env.OPENAI_BASE_URL, 'https://api.openai.com/v1')
+})
+
+test('startup env preserves persisted openai context-window override', async () => {
+  const override = JSON.stringify({ 'gpt-4o': 1_000_000 })
+  const env = await buildStartupEnvFromProfile({
+    persisted: profile('openai', {
+      OPENAI_API_KEY: 'sk-live',
+      OPENAI_MODEL: 'gpt-4o',
+      OPENAI_BASE_URL: 'https://api.openai.com/v1',
+      CLAUDE_CODE_OPENAI_CONTEXT_WINDOWS: override,
+    }),
+    processEnv: {},
+  })
+
+  assert.equal(env.CLAUDE_CODE_USE_OPENAI, '1')
+  assert.equal(env.OPENAI_MODEL, 'gpt-4o')
+  assert.equal(env.OPENAI_BASE_URL, 'https://api.openai.com/v1')
+  assert.equal(env.CLAUDE_CODE_OPENAI_CONTEXT_WINDOWS, override)
 })
 
 test('auto profile falls back to openai when no viable ollama model exists', () => {
