@@ -141,6 +141,12 @@ export async function initialize(): Promise<void> {
     persistent: true,
     ignoreInitial: true,
     depth: 2, // Skills use skill-name/SKILL.md format
+    // Do NOT follow symlinks: the skills directory may contain symlinks pointing
+    // to large external directories (e.g. ~/.agents/skills/). Following them with
+    // depth:2 causes Bun's FSWatcher to watch entire trees, triggering the known
+    // PathWatcherManager deadlock (oven-sh/bun#27469) when many watchers are
+    // opened/closed rapidly.
+    followSymlinks: false,
     awaitWriteFinish: {
       stabilityThreshold:
         testOverrides?.stabilityThreshold ?? FILE_STABILITY_THRESHOLD_MS,
