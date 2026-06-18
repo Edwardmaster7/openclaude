@@ -59,22 +59,15 @@ export function getNextPermissionMode(
       if (canCycleToAuto(toolPermissionContext)) {
         return 'auto'
       }
-      return 'default'
+      return 'dontAsk'
 
     case 'bypassPermissions':
-      if (toolPermissionContext.isBypassPermissionsModeAvailable) {
-        return 'fullAccess'
-      }
-      return 'default'
-
-    case 'fullAccess':
       if (canCycleToAuto(toolPermissionContext)) {
         return 'auto'
       }
-      return 'default'
+      return 'dontAsk'
 
     case 'dontAsk':
-      // Not exposed in UI cycle yet, but return default if somehow reached
       return 'default'
 
 

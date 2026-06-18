@@ -3,21 +3,21 @@ import { getEmptyToolPermissionContext } from '../../Tool.js'
 import { getNextPermissionMode } from './getNextPermissionMode.js'
 
 describe('getNextPermissionMode', () => {
-  test('cycles from bypassPermissions to fullAccess when dangerous modes are available', () => {
+  test('cycles from bypassPermissions to dontAsk when dangerous modes are available', () => {
     expect(
       getNextPermissionMode({
         ...getEmptyToolPermissionContext(),
         mode: 'bypassPermissions',
         isBypassPermissionsModeAvailable: true,
       }),
-    ).toBe('fullAccess')
+    ).toBe('dontAsk')
   })
 
-  test('cycles from fullAccess back to default without auto mode', () => {
+  test('cycles from dontAsk back to default without auto mode', () => {
     expect(
       getNextPermissionMode({
         ...getEmptyToolPermissionContext(),
-        mode: 'fullAccess',
+        mode: 'dontAsk',
         isBypassPermissionsModeAvailable: true,
       }),
     ).toBe('default')
