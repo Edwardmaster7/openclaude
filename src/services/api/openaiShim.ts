@@ -1102,12 +1102,12 @@ async function* openaiStreamToAnthropic(
         signal.addEventListener('abort', abortCleanup, { once: true })
       }
 
-      reader.read().then(
+      reader!.read().then(
         result => {
           clearTimeout(timeoutId)
           if (signal && abortCleanup) signal.removeEventListener('abort', abortCleanup)
-          if (result.value) lastDataTime = Date.now()
-          resolve(result)
+          if (!result.done && result.value) lastDataTime = Date.now()
+          resolve(result as ReadableStreamReadResult<Uint8Array>)
         },
         err => {
           clearTimeout(timeoutId)
@@ -2281,6 +2281,8 @@ class OpenAIShimMessages {
         throwClassifiedTransportError(error, requestUrl, failure)
       }
 
+      if (!response) continue
+
       if (response.ok) {
         let tokensIn = 0
         let tokensOut = 0
@@ -2325,7 +2327,7 @@ class OpenAIShimMessages {
           const responsesUrl = `${request.baseUrl}/responses`
           const responsesBody = buildResponsesBody()
 
-          let responsesResponse: Response
+          let responsesResponse: Response | undefined
           try {
             responsesResponse = await fetchWithProxyRetry(responsesUrl, {
               method: 'POST',
@@ -2336,6 +2338,8 @@ class OpenAIShimMessages {
           } catch (error) {
             throwClassifiedTransportError(error, responsesUrl)
           }
+
+          if (!responsesResponse) throw new Error('No response from /responses endpoint')
 
           if (responsesResponse.ok) {
             return responsesResponse
