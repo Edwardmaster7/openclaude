@@ -1,0 +1,97 @@
+import chalk from 'chalk'
+import { color } from '../../components/design-system/color.js'
+import { getGlobalConfig } from '../../utils/config.js'
+import { confirmTip, fetchNextTip } from '../ads.js'
+import type { Tip, TipContext, TipSponsor } from './types.js'
+
+/**
+ * Gitlawb earning tips. Unlike the static partner sponsored tips (which show at
+ * most once per session, gated by a per-startup counter), these target the
+ * opt-in earning user who ran `/ads on <code>`: they appear on a per-TURN
+ * cadence and credit opengateway credits each time one is shown.
+ */
+const GITLAWB: TipSponsor = {
+  name: 'Gitlawb',
+  url: 'https://gitlawb.com',
+  label: 'Sponsored',
+}
+
+// Show an earning ad on every Nth tip slot (per turn). Tunable so an earning
+// user can dial it up (1 = every turn) or down. Frequent by default — they opted in.
+const DEFAULT_TIP_EVERY = 2
+const MAX_CONFIRM_DELAY_MS = 30_000
+
+/** Earning is on only when the user ran `/ads on <code>` (enabled + a code). */
+export function adsEarningEnabled(): boolean {
+  const ads = getGlobalConfig().ads
+  return Boolean(ads?.enabled && ads.earnCode)
+}
+
+function tipEvery(): number {
+  const raw = Number(process.env.OPENCLAUDE_ADS_TIP_EVERY ?? DEFAULT_TIP_EVERY)
+  return Number.isFinite(raw) && raw >= 1 ? Math.trunc(raw) : DEFAULT_TIP_EVERY
+}
+
+// Per-session pick counter (resets each process start).
+let pickCounter = 0
+
+/**
+ * Whether this tip slot should be a Gitlawb earning ad. Called once per turn by
+ * getTipToShowOnSpinner; returns true on every Nth eligible call. Does NOT
+ * increment (or do anything) when earning is off, so non-opted-in users and the
+ * existing tip tests are unaffected.
+ */
+export function shouldShowEarningTip(): boolean {
+  if (!adsEarningEnabled()) return false
+  pickCounter += 1
+  return pickCounter % tipEvery() === 0
+}
+
+/** Test seam: reset the per-session cadence counter. */
+export function resetEarningCadenceForTesting(): void {
+  pickCounter = 0
+}
+
+function renderEarningTip(body: string, ctx: TipContext, earning: boolean): string {
+  const green = color('success', ctx.theme)
+  const label = earning ? 'Sponsored +credits' : 'Sponsored'
+  const badge = green(`${label} · ${GITLAWB.name}`)
+  const url = GITLAWB.url ? ` ${chalk.dim(GITLAWB.url)}` : ''
+  return `${badge} — ${green(body)}${url}`
+}
+
+/**
+ * The Gitlawb earning tip. content() fetches a real impression from the ads
+ * service and schedules a confirm after the dwell so the viewer is credited for
+ * seeing it. Any fetch/confirm failure degrades silently to a static line — ads
+ * must never break or block the host CLI. (Confirm fires ~dwell after the tip is
+ * picked; the fully attention-tied model is the server-side Tier-2 design.)
+ */
+export function buildEarningTip(): Tip {
+  return {
+    id: 'gitlawb-earn',
+    sponsor: GITLAWB,
+    cooldownSessions: 0,
+    isRelevant: async () => adsEarningEnabled(),
+    content: async (ctx: TipContext) => {
+      const fallback = 'Earn opengateway credits while you code — gitlawb.com'
+      const code = getGlobalConfig().ads?.earnCode
+      if (!code) return renderEarningTip(fallback, ctx, false)
+
+      let tip
+      try {
+        tip = await fetchNextTip(code)
+      } catch {
+        tip = null
+      }
+      if (!tip) return renderEarningTip(fallback, ctx, false)
+
+      const delay = Math.max(0, Math.min(tip.dwellMs, MAX_CONFIRM_DELAY_MS))
+      setTimeout(() => {
+        void confirmTip(code, tip.token).catch(() => {})
+      }, delay)
+
+      return renderEarningTip(tip.text, ctx, true)
+    },
+  }
+}
