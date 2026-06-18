@@ -1,11 +1,11 @@
 import type { Command } from '../../commands.js'
 const feedback = {
-  aliases: ['bug'],
-  type: 'local-jsx',
+  type: 'local',
   name: 'feedback',
-  description: `Submit feedback about OpenClaude`,
-  argumentHint: '[report]',
-  isEnabled: () => false,
+  description: `Gerencia e revisa os feedbacks e aprendizados aprendidos em memória pelo agente`,
+  argumentHint: '[confirm | list | review | ignore | synthesize | clear | reset]',
+  isEnabled: () => true,
+  supportsNonInteractive: true,
   load: () => import('./feedback.js'),
 } satisfies Command
 

@@ -43,6 +43,7 @@ import {
   executeUserPromptSubmitHooks,
   getUserPromptSubmitHookBlockingMessage,
 } from '../hooks.js'
+import { detectAndLogFeedback } from '../../hooks/feedbackHook.js'
 import {
   createImageMetadataText,
   maybeResizeAndDownsampleImageBlock,
@@ -266,6 +267,11 @@ export async function processUserInput({
     }
   }
   queryCheckpoint('query_hooks_end')
+
+  const feedbackProposal = await detectAndLogFeedback(inputMessage, messages || [], context.agentId)
+  if (feedbackProposal) {
+    result.messages.push(createSystemMessage(feedbackProposal.message, 'warning'))
+  }
 
   // Happy path: onQuery will clear userInputOnProcessing via startTransition
   // so it resolves in the same frame as deferredMessages (no flicker gap).
