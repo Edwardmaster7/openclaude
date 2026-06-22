@@ -1588,6 +1588,7 @@ test('maskSecretForDisplay preserves only a short prefix and suffix', () => {
 test('redactSecretValueForDisplay masks poisoned display fields that equal configured secrets', () => {
   const apiKey = 'sk-secret-12345678'
   const authHeaderValue = 'hicap-header-secret'
+  const routeApiKey = 'gsk-route-secret-value'
 
   assert.equal(
     redactSecretValueForDisplay(apiKey, { OPENAI_API_KEY: apiKey }),
@@ -1600,7 +1601,46 @@ test('redactSecretValueForDisplay masks poisoned display fields that equal confi
     'hic...ret',
   )
   assert.equal(
+    redactSecretValueForDisplay(routeApiKey, { GROQ_API_KEY: routeApiKey }),
+    'gsk...lue',
+  )
+  assert.equal(
     redactSecretValueForDisplay('gpt-4o', { OPENAI_API_KEY: apiKey }),
+    'gpt-4o',
+  )
+  assert.equal(
+    redactSecretValueForDisplay('gpt-4o', { OPENAI_MODEL: 'gpt-4o' }),
+    'gpt-4o',
+  )
+})
+
+test('redactSecretValueForDisplay collects common secret env suffixes', () => {
+  const secretEnvCases = [
+    ['ROUTE_API_KEY', 'route-api-secret-value'],
+    ['ROUTE_AUTH_HEADER_VALUE', 'route-auth-header-secret'],
+    ['SERVICE_PASSWORD', 'database-password-secret'],
+    ['SERVICE_SECRET', 'service-secret-value'],
+    ['AWS_SECRET_ACCESS_KEY', 'aws-secret-access-value'],
+    ['OAUTH_SECRET_KEY', 'oauth-secret-key-value'],
+    ['GITHUB_TOKEN', 'github-token-secret'],
+  ] as const
+
+  for (const [key, value] of secretEnvCases) {
+    const source = { [key]: value }
+
+    assert.equal(
+      redactSecretValueForDisplay(value, source),
+      maskSecretForDisplay(value),
+    )
+    assert.equal(sanitizeProviderConfigValue(value, source), undefined)
+  }
+
+  assert.equal(
+    redactSecretValueForDisplay('gpt-4o', { OPENAI_MODEL: 'gpt-4o' }),
+    'gpt-4o',
+  )
+  assert.equal(
+    sanitizeProviderConfigValue('gpt-4o', { OPENAI_MODEL: 'gpt-4o' }),
     'gpt-4o',
   )
 })
