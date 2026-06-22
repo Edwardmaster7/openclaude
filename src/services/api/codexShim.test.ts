@@ -613,6 +613,50 @@ describe('Codex request translation', () => {
     expect(either.anyOf).toEqual([{ type: 'string' }, { type: 'number' }])
   })
 
+  test('converts plain string user message into Codex input_text chunk type', () => {
+    const items = convertAnthropicMessagesToResponsesInput([
+      { role: 'user', content: 'hello' },
+    ], false) // forceTextChunks = false
+
+    expect(items).toEqual([
+      {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'hello' }],
+      },
+    ])
+  })
+
+  test('converts plain string user message into standard text chunk type when forceTextChunks=true', () => {
+    const items = convertAnthropicMessagesToResponsesInput([
+      { role: 'user', content: 'hello' },
+    ], true)
+
+    expect(items).toEqual([
+      {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'text', text: 'hello' }],
+      },
+    ])
+  })
+
+  test('preserves wrapped string message content', () => {
+    const items = convertAnthropicMessagesToResponsesInput([
+      {
+        message: { role: 'user', content: 'hello' }
+      },
+    ])
+
+    expect(items).toEqual([
+      {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'hello' }],
+      },
+    ])
+  })
+
   test('converts assistant tool use and user tool result into Responses items', () => {
     const items = convertAnthropicMessagesToResponsesInput([
       {
@@ -649,6 +693,46 @@ describe('Codex request translation', () => {
         output: 'done',
       },
     ])
+  })
+
+  test('renders tool_reference blocks from ToolSearch results as readable text', () => {
+    const items = convertAnthropicMessagesToResponsesInput([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'call_ts1', name: 'ToolSearch', input: { query: 'memory' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_ts1',
+            content: [
+              { type: 'tool_reference', tool_name: 'mcp__example__memory_search' },
+              { type: 'tool_reference', tool_name: 'mcp__example__memory_store' },
+            ],
+          },
+        ],
+      },
+    ])
+
+    const output = items.find(item => item.type === 'function_call_output') as
+      | { type: 'function_call_output'; output: string }
+      | undefined
+    expect(output).toBeDefined()
+    expect(output!.output).toContain('mcp__example__memory_search')
+    expect(output!.output).toContain('mcp__example__memory_store')
+  })
+
+  test('keeps the ToolSearch tool in the Responses tools list', () => {
+    const tools = convertToolsToResponsesTools([
+      { name: 'ToolSearch', description: 'Find deferred tools', input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+      { name: 'Read', description: 'Read a file', input_schema: { type: 'object', properties: {} } },
+    ])
+
+    expect(tools.map(t => t.name)).toEqual(['ToolSearch', 'Read'])
   })
 
   test('converts completed Codex tool response into Anthropic message', () => {
@@ -1014,6 +1098,98 @@ describe('Codex request translation', () => {
     expect(textDeltas.join('')).toBe(
       'I should note that the user role requires a briefly concise friendly response format.',
     )
+  })
+
+  // Regression for #1259 — codexspark / gpt-5.3-codex-spark backend delivers
+  // complete function-call arguments only via the terminal `done` event with
+  // zero `delta` events in between. Without handling either `done` variant,
+  // the Anthropic tool_use block closed with `input: {}` and Glob/Bash/etc.
+  // failed validation with "required parameter X is missing".
+  async function collectToolArgs(responseText: string): Promise<string> {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(responseText))
+        controller.close()
+      },
+    })
+
+    const argsParts: string[] = []
+    for await (const event of codexStreamToAnthropic(
+      new Response(stream),
+      'gpt-5.3-codex-spark',
+    )) {
+      const delta = (event as {
+        delta?: { type?: string; partial_json?: string }
+      }).delta
+      if (
+        delta?.type === 'input_json_delta' &&
+        typeof delta.partial_json === 'string'
+      ) {
+        argsParts.push(delta.partial_json)
+      }
+    }
+    return argsParts.join('')
+  }
+
+  test('Codex stream: tool args delivered only via function_call_arguments.done (#1259)', async () => {
+    const args = '{"path":"./openclaude-codex-repro","pattern":"**/*.md"}'
+    const responseText = [
+      'event: response.output_item.added',
+      `data: {"type":"response.output_item.added","item":{"id":"fc_1","call_id":"call_1","type":"function_call","name":"Glob","arguments":""},"output_index":0,"sequence_number":0}`,
+      '',
+      'event: response.function_call_arguments.done',
+      `data: {"type":"response.function_call_arguments.done","item_id":"fc_1","arguments":${JSON.stringify(args)},"output_index":0,"sequence_number":1}`,
+      '',
+      'event: response.output_item.done',
+      `data: {"type":"response.output_item.done","item":{"id":"fc_1","call_id":"call_1","type":"function_call","name":"Glob","arguments":${JSON.stringify(args)}},"output_index":0,"sequence_number":2}`,
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","model":"gpt-5.3-codex-spark","output":[],"usage":{"input_tokens":2,"output_tokens":3}},"sequence_number":3}',
+      '',
+    ].join('\n')
+
+    expect(await collectToolArgs(responseText)).toBe(args)
+  })
+
+  test('Codex stream: tool args fallback via output_item.done when no delta + no arguments.done', async () => {
+    const args = '{"command":"ls -la"}'
+    const responseText = [
+      'event: response.output_item.added',
+      `data: {"type":"response.output_item.added","item":{"id":"fc_1","call_id":"call_1","type":"function_call","name":"Bash","arguments":""},"output_index":0,"sequence_number":0}`,
+      '',
+      'event: response.output_item.done',
+      `data: {"type":"response.output_item.done","item":{"id":"fc_1","call_id":"call_1","type":"function_call","name":"Bash","arguments":${JSON.stringify(args)}},"output_index":0,"sequence_number":1}`,
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","model":"gpt-5.3-codex-spark","output":[],"usage":{"input_tokens":2,"output_tokens":3}},"sequence_number":2}',
+      '',
+    ].join('\n')
+
+    expect(await collectToolArgs(responseText)).toBe(args)
+  })
+
+  test('Codex stream: delta path still works when present (no duplication on done)', async () => {
+    const args = '{"path":"./x","pattern":"**/*.ts"}'
+    const responseText = [
+      'event: response.output_item.added',
+      `data: {"type":"response.output_item.added","item":{"id":"fc_1","call_id":"call_1","type":"function_call","name":"Glob","arguments":""},"output_index":0,"sequence_number":0}`,
+      '',
+      'event: response.function_call_arguments.delta',
+      `data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":${JSON.stringify(args)},"output_index":0,"sequence_number":1}`,
+      '',
+      'event: response.function_call_arguments.done',
+      `data: {"type":"response.function_call_arguments.done","item_id":"fc_1","arguments":${JSON.stringify(args)},"output_index":0,"sequence_number":2}`,
+      '',
+      'event: response.output_item.done',
+      `data: {"type":"response.output_item.done","item":{"id":"fc_1","call_id":"call_1","type":"function_call","name":"Glob","arguments":${JSON.stringify(args)}},"output_index":0,"sequence_number":3}`,
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","model":"gpt-5.3-codex-spark","output":[],"usage":{"input_tokens":2,"output_tokens":3}},"sequence_number":4}',
+      '',
+    ].join('\n')
+
+    // Delta wins; done branches must NOT re-emit and double the JSON.
+    expect(await collectToolArgs(responseText)).toBe(args)
   })
 })
 

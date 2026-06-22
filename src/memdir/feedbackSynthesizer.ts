@@ -172,7 +172,7 @@ export async function runFeedbackSynthesis(context: any): Promise<string> {
         try {
           await fs.unlink(filePath)
         } catch {}
-        fs.appendFileSync(filePath, finalMarkdown, { encoding: 'utf8' })
+        fs.appendFileSync(filePath, finalMarkdown, { encoding: 'utf8' } as any)
         savedFiles.push(`${fileName} (Score: ${score}, Confirmações: ${confirmations})`)
       } catch (writeErr) {
         // Silent catch

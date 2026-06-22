@@ -152,7 +152,7 @@ describe('buddy-feedback integration', () => {
     } as any
 
     it('confirm command falls back to listing recent interactions when no pending events exist', async () => {
-      const result = await feedbackCall('confirm', sampleContext)
+      const result = await feedbackCall('confirm', sampleContext) as any
       expect(result.type).toBe('text')
       expect(result.value).toContain('Nenhum feedback pendente sugerido automaticamente')
       expect(result.value).toContain('use bun test instead')
@@ -160,7 +160,7 @@ describe('buddy-feedback integration', () => {
     })
 
     it('approve <index> logs confirmed correction and rewards companion', async () => {
-      const result = await feedbackCall('approve 1', sampleContext)
+      const result = await feedbackCall('approve 1', sampleContext) as any
       expect(result.type).toBe('text')
       expect(result.value).toContain('Interação [1] aprovada e gravada com sucesso!')
       expect(result.value).toContain('Pixelbud') // Reaction from Buddy
@@ -178,7 +178,7 @@ describe('buddy-feedback integration', () => {
     })
 
     it('approve <custom rule> logs custom text rule directly and rewards companion', async () => {
-      const result = await feedbackCall('approve utilize bun para rodar testes', sampleContext)
+      const result = await feedbackCall('approve utilize bun para rodar testes', sampleContext) as any
       expect(result.type).toBe('text')
       expect(result.value).toContain('Regra personalizada criada e gravada com sucesso')
       expect(result.value).toContain('utilize bun para rodar testes')
@@ -195,7 +195,7 @@ describe('buddy-feedback integration', () => {
     })
 
     it('reject <index> logs outcome/correction event with success = false', async () => {
-      const result = await feedbackCall('reject 1', sampleContext)
+      const result = await feedbackCall('reject 1', sampleContext) as any
       expect(result.type).toBe('text')
       expect(result.value).toContain('marcada como indesejada')
 
@@ -212,7 +212,7 @@ describe('buddy-feedback integration', () => {
     })
 
     it('help command returns the detailed feedback learning guide', async () => {
-      const result = await feedbackCall('help', sampleContext)
+      const result = await feedbackCall('help', sampleContext) as any
       expect(result.type).toBe('text')
       expect(result.value).toContain('SISTEMA DE APRENDIZADO DE FEEDBACK')
       expect(result.value).toContain('/feedback approve')

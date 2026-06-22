@@ -142,7 +142,7 @@ export const call: LocalCommandCall = async (args, context): Promise<LocalComman
       try {
         await fs.unlink(logPath)
       } catch {}
-      fs.appendFileSync(logPath, logContent, { encoding: 'utf8' })
+      fs.appendFileSync(logPath, logContent, { encoding: 'utf8' } as any)
 
       // Notify buddy and grant XP
       const companion = getCompanion()
@@ -386,7 +386,7 @@ export const call: LocalCommandCall = async (args, context): Promise<LocalComman
         const finalContent = `${newFrontmatterStr}\n${content}`
         
         await fs.unlink(target.filePath)
-        fs.appendFileSync(target.filePath, finalContent, { encoding: 'utf8' })
+        fs.appendFileSync(target.filePath, finalContent, { encoding: 'utf8' } as any)
         
         return {
           type: 'text',

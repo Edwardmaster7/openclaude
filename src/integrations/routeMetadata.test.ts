@@ -54,6 +54,23 @@ test('getRouteCredentialEnvVars keeps descriptor env vars and openai fallback fo
   ])
 })
 
+test('getRouteCredentialEnvVars omits the openai fallback for dedicatedCredentialsOnly routes', () => {
+  expect(getRouteCredentialEnvVars('atlas-cloud')).toEqual([
+    'ATLAS_CLOUD_API_KEY',
+  ])
+  expect(
+    getRouteCredentialValue('atlas-cloud', {
+      OPENAI_API_KEY: 'sk-openai-generic',
+    }),
+  ).toBeUndefined()
+  expect(
+    getRouteCredentialValue('atlas-cloud', {
+      OPENAI_API_KEY: 'sk-openai-generic',
+      ATLAS_CLOUD_API_KEY: 'atlas-key',
+    }),
+  ).toBe('atlas-key')
+})
+
 test('getRouteCredentialValue reads the first configured route credential', () => {
   expect(
     getRouteCredentialValue('openrouter', {
@@ -98,6 +115,16 @@ test('resolveActiveRouteIdFromEnv treats MiniMax credential-only env as MiniMax'
   ).toBe('minimax')
 })
 
+test('resolveActiveRouteIdFromEnv treats Anthropic-compatible MiniMax profile env as MiniMax', () => {
+  expect(
+    resolveActiveRouteIdFromEnv({
+      ANTHROPIC_BASE_URL: 'https://api.minimax.io/anthropic',
+      ANTHROPIC_API_KEY: 'minimax-key',
+      ANTHROPIC_MODEL: 'MiniMax-M2.7',
+    }),
+  ).toBe('minimax')
+})
+
 test('resolveActiveRouteIdFromEnv treats Venice credential-only env as Venice', () => {
   expect(
     resolveActiveRouteIdFromEnv({
@@ -120,6 +147,30 @@ test('resolveActiveRouteIdFromEnv prefers xAI when env-only keys compete', () =>
       MINIMAX_API_KEY: 'minimax-key',
     }),
   ).toBe('xai')
+})
+
+test('resolveActiveRouteIdFromEnv lets explicit MiniMax model beat ambient OpenAI-compatible env', () => {
+  expect(
+    resolveActiveRouteIdFromEnv({
+      CLAUDE_CODE_USE_OPENAI: '1',
+      OPENAI_API_KEY: 'openai-key',
+      XAI_API_KEY: 'xai-key',
+      MINIMAX_API_KEY: 'minimax-key',
+      OPENAI_MODEL: 'MiniMax-M2.7',
+    }),
+  ).toBe('minimax')
+})
+
+test('resolveActiveRouteIdFromEnv does not use MiniMax when OpenAI base conflicts', () => {
+  expect(
+    resolveActiveRouteIdFromEnv({
+      CLAUDE_CODE_USE_OPENAI: '1',
+      OPENAI_API_KEY: 'openai-key',
+      MINIMAX_API_KEY: 'minimax-key',
+      OPENAI_BASE_URL: 'https://api.openai.com/v1',
+      OPENAI_MODEL: 'MiniMax-M2.7',
+    }),
+  ).toBe('openai')
 })
 
 test('resolveActiveRouteIdFromEnv keeps xAI primary base over stale API base', () => {
@@ -175,4 +226,33 @@ test('resolveActiveRouteIdFromEnv does not infer MiniMax with OpenAI credentials
       OPENAI_API_KEY: 'openai-key',
     }),
   ).toBe('anthropic')
+})
+
+test('resolveActiveRouteIdFromEnv infers Near AI with NEARAI_API_KEY and stale OPENAI_API_KEY', () => {
+  expect(
+    resolveActiveRouteIdFromEnv({
+      NEARAI_API_KEY: 'nearai-key',
+      OPENAI_API_KEY: 'stale-openai-key',
+    }),
+  ).toBe('nearai')
+})
+
+test('resolveActiveRouteIdFromEnv does not infer Near AI when OPENAI_BASE_URL points elsewhere', () => {
+  expect(
+    resolveActiveRouteIdFromEnv({
+      NEARAI_API_KEY: 'nearai-key',
+      OPENAI_API_KEY: 'openai-key',
+      OPENAI_BASE_URL: 'https://api.openai.com/v1',
+    }),
+  ).toBe('anthropic')
+})
+
+test('resolveActiveRouteIdFromEnv does not infer Near AI with explicit provider flag', () => {
+  expect(
+    resolveActiveRouteIdFromEnv({
+      NEARAI_API_KEY: 'nearai-key',
+      OPENAI_API_KEY: 'openai-key',
+      CLAUDE_CODE_USE_GEMINI: '1',
+    }),
+  ).toBe('gemini')
 })

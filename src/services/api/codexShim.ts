@@ -46,6 +46,7 @@ export interface ShimCreateParams {
 type ResponsesInputPart =
   | { type: 'input_text'; text: string }
   | { type: 'output_text'; text: string }
+  | { type: 'text'; text: string }
   | { type: 'input_image'; image_url: string }
 
 type ResponsesInputItem =
@@ -149,6 +150,15 @@ function convertToolResultToText(content: unknown): string {
       continue
     }
 
+    // ToolSearch results are tool_reference blocks with no text payload. On
+    // the Anthropic wire the API expands them server-side; here we render
+    // them as text — the full schema arrives in the next request's tools
+    // array (see the discovered-tools filter in claude.ts).
+    if (block?.type === 'tool_reference' && typeof block.tool_name === 'string') {
+      chunks.push(`Tool "${block.tool_name}" is now loaded and available to call.`)
+      continue
+    }
+
     if (block?.type === 'image') {
       const src = block.source
       if (src?.type === 'url' && src.url) {
@@ -168,8 +178,9 @@ function convertToolResultToText(content: unknown): string {
 function convertContentBlocksToResponsesParts(
   content: unknown,
   role: 'user' | 'assistant',
+  forceTextChunks: boolean,
 ): ResponsesInputPart[] {
-  const textType = role === 'assistant' ? 'output_text' : 'input_text'
+  const textType = !forceTextChunks ? (role === 'assistant' ? 'output_text' : 'input_text') : 'text'
   if (typeof content === 'string') {
     return [{ type: textType, text: content }]
   }
@@ -221,20 +232,31 @@ function convertContentBlocksToResponsesParts(
 }
 
 export function convertAnthropicMessagesToResponsesInput(
-  messages: Array<{ role?: string; message?: { role?: string; content?: unknown }; content?: unknown }>,
+  compressedMessages: Array<{
+    role?: string
+    message?: { role?: string; content?: unknown }
+    content?: unknown
+  }>,
+  forceTextChunks = false,
 ): ResponsesInputItem[] {
   const items: ResponsesInputItem[] = []
 
-  for (const message of messages) {
-    const inner = message.message ?? message
-    const role = (inner as { role?: string }).role ?? message.role
-    const content = (inner as { content?: unknown }).content
+  for (const item of compressedMessages) {
+    const rawRole = item.message?.role ?? item.role
+    const role =
+      rawRole === 'assistant' || rawRole === 'model' ? 'assistant' : 'user'
+
+    const contentRaw = item.message?.content ?? item.content
+    const content = Array.isArray(contentRaw)
+      ? contentRaw
+      : [{ type: 'text', text: String(contentRaw ?? '') }]
 
     if (role === 'user') {
-      if (Array.isArray(content)) {
-        const toolResults = content.filter(
-          (block: { type?: string }) => block.type === 'tool_result',
-        )
+      const toolResults = content.filter(
+        (block: { type?: string }) => block.type === 'tool_result',
+      )
+
+      if (toolResults.length > 0) {
         const otherContent = content.filter(
           (block: { type?: string }) => block.type !== 'tool_result',
         )
@@ -251,7 +273,7 @@ export function convertAnthropicMessagesToResponsesInput(
           })
         }
 
-        const parts = convertContentBlocksToResponsesParts(otherContent, 'user')
+        const parts = convertContentBlocksToResponsesParts(otherContent, 'user', forceTextChunks)
         if (parts.length > 0) {
           items.push({
             type: 'message',
@@ -265,7 +287,7 @@ export function convertAnthropicMessagesToResponsesInput(
       items.push({
         type: 'message',
         role: 'user',
-        content: convertContentBlocksToResponsesParts(content, 'user'),
+        content: convertContentBlocksToResponsesParts(content, 'user', forceTextChunks),
       })
       continue
     }
@@ -275,7 +297,7 @@ export function convertAnthropicMessagesToResponsesInput(
         ? content.filter((block: { type?: string }) =>
             block.type !== 'tool_use' && block.type !== 'thinking')
         : content
-      const parts = convertContentBlocksToResponsesParts(textBlocks, 'assistant')
+      const parts = convertContentBlocksToResponsesParts(textBlocks, 'assistant', forceTextChunks)
       if (parts.length > 0) {
         items.push({
           type: 'message',
@@ -445,8 +467,10 @@ export function convertToolsToResponsesTools(
   tools: Array<{ name?: string; description?: string; input_schema?: Record<string, unknown> }>,
   model?: string
 ): ResponsesTool[] {
+  // Note: ToolSearch (the deferral discovery tool) must reach the wire as a
+  // regular function — claude.ts already removes it when tool search is off.
   return tools
-    .filter(tool => tool.name && tool.name !== 'ToolSearchTool')
+    .filter(tool => tool.name)
     .map(tool => {
       const rawParameters = tool.input_schema ?? { type: 'object', properties: {} }
       // Codex requires strict schemas: all properties must be required
@@ -659,7 +683,7 @@ async function* readSseEvents(response: Response, signal?: AbortSignal): AsyncGe
    * AbortSignal — clears the idle timer on abort so the AbortError
    * surfaces cleanly instead of a spurious idle timeout.
    */
-  async function readWithTimeout(): Promise<ReadableStreamReadResult<Uint8Array>> {
+  async function readWithTimeout(): Promise<Bun.ReadableStreamDefaultReadResult<Uint8Array<ArrayBuffer>>> {
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         const elapsed = Math.round((Date.now() - lastDataTime) / 1000)
@@ -676,7 +700,8 @@ async function* readSseEvents(response: Response, signal?: AbortSignal): AsyncGe
         signal.addEventListener('abort', abortCleanup, { once: true })
       }
 
-      reader.read().then(
+      // reader is guarded non-null above; hoisted function escapes TS narrowing.
+      reader!.read().then(
         result => {
           clearTimeout(timeoutId)
           if (signal && abortCleanup) signal.removeEventListener('abort', abortCleanup)
@@ -792,7 +817,7 @@ export async function* codexStreamToAnthropic(
   const messageId = makeMessageId()
   const toolBlocksByItemId = new Map<
     string,
-    { index: number; toolUseId: string }
+    { index: number; toolUseId: string; emittedArgs: string }
   >()
   let activeTextBlockIndex: number | null = null
   const thinkFilter = createThinkTagFilter()
@@ -853,9 +878,12 @@ export async function* codexStreamToAnthropic(
         yield* closeActiveTextBlock()
         const blockIndex = nextContentBlockIndex++
         const toolUseId = item.call_id ?? item.id ?? `call_${blockIndex}`
+        const initialArgs =
+          typeof item.arguments === 'string' ? item.arguments : ''
         toolBlocksByItemId.set(String(item.id ?? toolUseId), {
           index: blockIndex,
           toolUseId,
+          emittedArgs: initialArgs,
         })
         sawToolUse = true
 
@@ -870,13 +898,13 @@ export async function* codexStreamToAnthropic(
           },
         }
 
-        if (item.arguments) {
+        if (initialArgs) {
           yield {
             type: 'content_block_delta',
             index: blockIndex,
             delta: {
               type: 'input_json_delta',
-              partial_json: item.arguments,
+              partial_json: initialArgs,
             },
           }
         }
@@ -912,13 +940,43 @@ export async function* codexStreamToAnthropic(
     if (event.event === 'response.function_call_arguments.delta') {
       const toolBlock = toolBlocksByItemId.get(String(payload.item_id ?? ''))
       if (toolBlock) {
-        yield {
-          type: 'content_block_delta',
-          index: toolBlock.index,
-          delta: {
-            type: 'input_json_delta',
-            partial_json: payload.delta ?? '',
-          },
+        const delta = typeof payload.delta === 'string' ? payload.delta : ''
+        if (delta) {
+          toolBlock.emittedArgs += delta
+          yield {
+            type: 'content_block_delta',
+            index: toolBlock.index,
+            delta: {
+              type: 'input_json_delta',
+              partial_json: delta,
+            },
+          }
+        }
+      }
+      continue
+    }
+
+    // Some Codex Responses backends (codexspark / gpt-5.3-codex-spark) deliver
+    // the *complete* function-call arguments only via the terminal
+    // `response.function_call_arguments.done` event, with zero
+    // `response.function_call_arguments.delta` events in between. Without
+    // handling `done`, the tool block closed with `input: {}` and downstream
+    // tool validation failed with "required parameter X is missing" (#1259).
+    if (event.event === 'response.function_call_arguments.done') {
+      const toolBlock = toolBlocksByItemId.get(String(payload.item_id ?? ''))
+      if (toolBlock) {
+        const fullArgs =
+          typeof payload.arguments === 'string' ? payload.arguments : ''
+        if (fullArgs && !toolBlock.emittedArgs) {
+          toolBlock.emittedArgs = fullArgs
+          yield {
+            type: 'content_block_delta',
+            index: toolBlock.index,
+            delta: {
+              type: 'input_json_delta',
+              partial_json: fullArgs,
+            },
+          }
         }
       }
       continue
@@ -929,6 +987,22 @@ export async function* codexStreamToAnthropic(
       if (item?.type === 'function_call') {
         const toolBlock = toolBlocksByItemId.get(String(item.id ?? ''))
         if (toolBlock) {
+          // Backstop for backends that skip the dedicated `function_call_arguments.done`
+          // event entirely and only put the full arguments on `output_item.done`.
+          // Same #1259 failure mode; trust whichever channel actually carried the data.
+          const finalArgs =
+            typeof item.arguments === 'string' ? item.arguments : ''
+          if (finalArgs && !toolBlock.emittedArgs) {
+            toolBlock.emittedArgs = finalArgs
+            yield {
+              type: 'content_block_delta',
+              index: toolBlock.index,
+              delta: {
+                type: 'input_json_delta',
+                partial_json: finalArgs,
+              },
+            }
+          }
           yield {
             type: 'content_block_stop',
             index: toolBlock.index,

@@ -1,4 +1,39 @@
-import { formatDuration, formatSecondsShort, formatNumber, formatTokens } from './format.js'
+import { describe, expect, test } from 'bun:test'
+import {
+  formatDuration,
+  formatFileSize,
+  formatNumber,
+  formatSecondsShort,
+  formatTokens,
+} from './format.js'
+
+describe('formatFileSize', () => {
+  test('formats sub-KB sizes as raw bytes', () => {
+    expect(formatFileSize(0)).toBe('0 bytes')
+    expect(formatFileSize(512)).toBe('512 bytes')
+    expect(formatFileSize(1023)).toBe('1023 bytes')
+  })
+
+  test('formats KB sizes with a stripped trailing .0', () => {
+    expect(formatFileSize(1024)).toBe('1KB')
+    expect(formatFileSize(1536)).toBe('1.5KB')
+  })
+
+  test('rolls KB over to MB when the rounded value reaches 1024', () => {
+    expect(formatFileSize(1048575)).toBe('1MB')
+    expect(formatFileSize(1048576)).toBe('1MB')
+  })
+
+  test('rolls MB over to GB when the rounded value reaches 1024', () => {
+    expect(formatFileSize(1073741823)).toBe('1GB')
+    expect(formatFileSize(1073741824)).toBe('1GB')
+  })
+
+  test('formats normal MB and GB sizes', () => {
+    expect(formatFileSize(1024 * 1024 * 2.5)).toBe('2.5MB')
+    expect(formatFileSize(1024 * 1024 * 1024 * 3)).toBe('3GB')
+  })
+})
 
 describe('formatDuration', () => {
   describe('edge cases', () => {
@@ -15,7 +50,7 @@ describe('formatDuration', () => {
     test('shows decimal for sub-10s durations', () => {
       expect(formatDuration(500)).toBe('0.5s')
       expect(formatDuration(1234)).toBe('1.2s')
-      expect(formatDuration(9999)).toBe('10.0s') // 9.999 rounds to 10.0
+      expect(formatDuration(9999)).toBe('10.0s')
     })
 
     test('shows integer for 10-59s', () => {
@@ -91,7 +126,7 @@ describe('formatDuration', () => {
     })
   })
 
-  describe('regression: the "313 seconds" bug', () => {
+  describe("regression: the '313 seconds' bug", () => {
     test('185000ms = 3m 5s, NOT 185s', () => {
       expect(formatDuration(185000)).toBe('3m 5s')
     })

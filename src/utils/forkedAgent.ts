@@ -105,6 +105,11 @@ export type ForkedAgentParams = {
   maxTurns?: number
   /** Optional callback invoked for each message as it arrives (for streaming UI) */
   onMessage?: (message: Message) => void
+  /** Optional callback for stream events (e.g., text deltas for progress tracking) */
+  onStreamEvent?: (event: {
+    type: string
+    event?: { type: string; delta?: { type: string; text?: string } }
+  }) => void
   /** Skip sidechain transcript recording (e.g., for ephemeral work like speculation) */
   skipTranscript?: boolean
   /** Skip writing new prompt cache entries on the last message. For
@@ -272,6 +277,8 @@ export type SubagentContextOverrides = {
   abortController?: AbortController
   /** Override the getAppState function */
   getAppState?: ToolUseContext['getAppState']
+  /** Explicitly opt in to sharing a lifecycle tracker with this subagent. */
+  queryLifecycle?: ToolUseContext['queryLifecycle']
 
   /**
    * Explicit opt-in to share parent's setAppState callback.
@@ -454,6 +461,9 @@ export function createSubagentContext(
     // Generate new agentId for subagents (each subagent should have its own ID)
     agentId: overrides?.agentId ?? createAgentId(),
     agentType: overrides?.agentType,
+    ...(overrides?.queryLifecycle
+      ? { queryLifecycle: overrides.queryLifecycle }
+      : {}),
 
     // Create new query tracking chain for subagent with incremented depth
     queryTracking: {
@@ -503,6 +513,7 @@ export async function runForkedAgent({
   maxOutputTokens,
   maxTurns,
   onMessage,
+  onStreamEvent,
   skipTranscript,
   skipCacheWrite,
 }: ForkedAgentParams): Promise<ForkedAgentResult> {
@@ -570,6 +581,15 @@ export async function runForkedAgent({
         ) {
           const turnUsage = updateUsage({ ...EMPTY_USAGE }, message.event.usage)
           totalUsage = accumulateUsage(totalUsage, turnUsage)
+        }
+        // Forward text delta events for character-level progress tracking
+        if (
+          onStreamEvent &&
+          'event' in message &&
+          message.event?.type === 'content_block_delta' &&
+          message.event?.delta?.type === 'text_delta'
+        ) {
+          onStreamEvent(message as { type: string; event: { type: string; delta: { type: string; text: string } } })
         }
         continue
       }

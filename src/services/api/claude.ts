@@ -67,6 +67,7 @@ import {
   CAPPED_DEFAULT_MAX_TOKENS,
   getModelMaxOutputTokens,
   getSonnet1mExpTreatmentEnabled,
+  shouldUseIntegrationRuntimeLimits,
 } from '../../utils/context.js'
 import { resolveAppliedEffort } from '../../utils/effort.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
@@ -119,6 +120,7 @@ import {
   getCacheEditingHeaderLatched,
   getFastModeHeaderLatched,
   getLastApiCompletionTimestamp,
+  getSdkBetas,
   getPromptCache1hAllowlist,
   getPromptCache1hEligible,
   getSessionId,
@@ -164,10 +166,11 @@ import {
 } from 'src/utils/betas.js'
 import { CLAUDE_IN_CHROME_MCP_SERVER_NAME } from 'src/utils/claudeInChrome/common.js'
 import { CHROME_TOOL_SEARCH_INSTRUCTIONS } from 'src/utils/claudeInChrome/prompt.js'
-import { getMaxThinkingTokensForModel } from 'src/utils/context.js'
+import { COMPACT_MAX_OUTPUT_TOKENS, getContextWindowForModel, getMaxThinkingTokensForModel } from 'src/utils/context.js'
 import { logForDebugging } from 'src/utils/debug.js'
 import { logForDiagnosticsNoPII } from 'src/utils/diagLogs.js'
 import { type EffortValue, modelSupportsEffort } from 'src/utils/effort.js'
+import type { QueryLifecycleOperationTracker } from 'src/utils/queryLifecycle.js'
 import {
   isFastModeAvailable,
   isFastModeCooldown,
@@ -181,7 +184,7 @@ import { calculateUSDCost } from 'src/utils/modelCost.js'
 import { endQueryProfile, queryCheckpoint } from 'src/utils/queryProfiler.js'
 import {
   modelSupportsAdaptiveThinking,
-  modelSupportsThinking,
+  shouldUseThinkingForModel,
   type ThinkingConfig,
 } from 'src/utils/thinking.js'
 import {
@@ -714,6 +717,7 @@ export type Options = {
   // (query.ts decrements across the agentic loop).
   taskBudget?: { total: number; remaining?: number }
   providerOverride?: { model: string; baseURL: string; apiKey: string }
+  queryLifecycle?: QueryLifecycleOperationTracker
 }
 
 export async function queryModelWithoutStreaming({
@@ -850,6 +854,7 @@ export async function* executeNonStreamingRequest(
    * from. Emitted in tengu_nonstreaming_fallback_error for funnel correlation.
    */
   originatingRequestId?: string | null,
+  queryLifecycle?: QueryLifecycleOperationTracker,
 ): AsyncGenerator<SystemAPIErrorMessage, BetaMessage> {
   const fallbackTimeoutMs = getNonstreamingFallbackTimeoutMs()
   const generator = withRetry(
@@ -872,6 +877,12 @@ export async function* executeNonStreamingRequest(
         retryParams,
         MAX_NON_STREAMING_TOKENS,
       )
+      const activeApiCallKey =
+        queryLifecycle?.startApiCall({
+          model: context.model,
+          querySource: retryOptions.querySource,
+          startedAt: start,
+        }) ?? null
 
       try {
         // biome-ignore lint/plugin: non-streaming API call
@@ -906,6 +917,10 @@ export async function* executeNonStreamingRequest(
             'unknown') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
         })
         throw err
+      } finally {
+        if (activeApiCallKey) {
+          queryLifecycle?.endApiCall(activeApiCallKey)
+        }
       }
     },
     {
@@ -951,9 +966,11 @@ function getPreviousRequestIdFromMessages(
   return undefined
 }
 
-function isMedia(
-  block: BetaContentBlockParam,
-): block is BetaImageBlockParam | BetaRequestDocumentBlock {
+// Generic so it accepts both top-level content blocks and the narrower
+// (beta or non-beta) unions nested inside tool_result content.
+function isMedia<T extends { type: string }>(
+  block: T,
+): block is T & (BetaImageBlockParam | BetaRequestDocumentBlock) {
   return block.type === 'image' || block.type === 'document'
 }
 
@@ -978,7 +995,7 @@ export function stripExcessMediaItems(
       if (isMedia(block)) toRemove++
       if (isToolResult(block) && Array.isArray(block.content)) {
         for (const nested of block.content) {
-          if (isMedia(nested)) toRemove++
+          if (isMedia(nested as BetaContentBlockParam)) toRemove++
         }
       }
     }
@@ -1001,7 +1018,7 @@ export function stripExcessMediaItems(
         )
           return block
         const filtered = block.content.filter(n => {
-          if (toRemove > 0 && isMedia(n)) {
+          if (toRemove > 0 && isMedia(n as BetaContentBlockParam)) {
             toRemove--
             return false
           }
@@ -1214,7 +1231,7 @@ async function* queryModel(
     cachedMCEnabled = featureEnabled && modelSupported
     const config = getCachedMCConfig()
     logForDebugging(
-      `Cached MC gate: enabled=${featureEnabled} modelSupported=${modelSupported} model=${options.model} supportedModels=${jsonStringify(config?.supportedModels)}`,
+      `Cached MC gate: enabled=${featureEnabled} modelSupported=${modelSupported} model=${options.model} supportedModels=${jsonStringify((config as Record<string, unknown> | null)?.supportedModels)}`,
     )
   }
 
@@ -1287,12 +1304,17 @@ async function* queryModel(
     const strategyResult = applyHybridStrategy(messagesForAPI, {
       cacheWeight: 0.4,
       freshWeight: 0.6,
-      maxTotalTokens: Math.min(
-        getContextWindowForModel(model, getSdkBetas()) - COMPACT_MAX_OUTPUT_TOKENS,
-        200000
+      maxTotalTokens: Math.max(
+        0,
+        Math.min(
+          getContextWindowForModel(options.model, getSdkBetas()) - COMPACT_MAX_OUTPUT_TOKENS,
+          200000,
+        ),
       ),
     })
-    messagesForAPI = strategyResult.selectedMessages
+    // applyHybridStrategy is typed over the full Message union but only ever
+    // receives (and returns) the user/assistant subset passed in here.
+    messagesForAPI = strategyResult.selectedMessages as typeof messagesForAPI
   }
 
   // Model-specific post-processing: strip tool-search-specific fields if the
@@ -1327,7 +1349,13 @@ async function* queryModel(
   // Repair tool_use/tool_result pairing mismatches that can occur when resuming
   // remote/teleport sessions. Inserts synthetic error tool_results for orphaned
   // tool_uses and strips orphaned tool_results referencing non-existent tool_uses.
-  messagesForAPI = ensureToolResultPairing(messagesForAPI)
+  messagesForAPI = ensureToolResultPairing(messagesForAPI, {
+    phase: 'api_before_repair',
+    querySource: options.querySource,
+    agentId: options.agentId,
+    model: options.model,
+    provider: getAPIProvider(),
+  })
 
   // Strip advisor blocks — the API rejects them without the beta header.
   if (!betas.includes(ADVISOR_BETA_HEADER)) {
@@ -1522,8 +1550,23 @@ async function* queryModel(
   let stream: Stream<BetaRawMessageStreamEvent> | undefined = undefined
   let streamRequestId: string | null | undefined = undefined
   let clientRequestId: string | undefined = undefined
-  // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins -- Response is available in Node 18+ and is used by the SDK
+  let activeApiCallKey: string | null = null
+  // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins -- Response is available in supported Node runtimes and is used by the SDK
   let streamResponse: Response | undefined = undefined
+
+  function endActiveApiCall(key = activeApiCallKey): void {
+    if (!key) return
+    options.queryLifecycle?.endApiCall(key)
+    if (activeApiCallKey === key) {
+      activeApiCallKey = null
+    }
+  }
+
+  function startActiveApiCall(call: Parameters<QueryLifecycleOperationTracker['startApiCall']>[0]): string | null {
+    endActiveApiCall()
+    activeApiCallKey = options.queryLifecycle?.startApiCall(call) ?? null
+    return activeApiCallKey
+  }
 
   // Release all stream resources to prevent native memory leaks.
   // The Response object holds native TLS/socket buffers that live outside the
@@ -1604,18 +1647,16 @@ async function* queryModel(
       options.maxOutputTokensOverride ||
       getMaxOutputTokensForModel(options.model)
 
-    const hasThinking =
-      thinkingConfig.type !== 'disabled' &&
-      !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_THINKING)
+    const hasThinking = shouldUseThinkingForModel(retryContext.model, thinkingConfig)
     let thinking: BetaMessageStreamParams['thinking'] | undefined = undefined
 
     // IMPORTANT: Do not change the adaptive-vs-budget thinking selection below
     // without notifying the model launch DRI and research. This is a sensitive
     // setting that can greatly affect model quality and bashing.
-    if (hasThinking && modelSupportsThinking(options.model)) {
+    if (hasThinking) {
       if (
         !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING) &&
-        modelSupportsAdaptiveThinking(options.model)
+        modelSupportsAdaptiveThinking(retryContext.model)
       ) {
         // For models that support adaptive thinking, always use adaptive
         // thinking without a budget.
@@ -1625,7 +1666,7 @@ async function* queryModel(
       } else {
         // For models that do not support adaptive thinking, use the default
         // thinking budget unless explicitly specified.
-        let thinkingBudget = getMaxThinkingTokensForModel(options.model)
+        let thinkingBudget = getMaxThinkingTokensForModel(retryContext.model)
         if (
           thinkingConfig.type === 'enabled' &&
           thinkingConfig.budgetTokens !== undefined
@@ -1721,8 +1762,11 @@ async function* queryModel(
         enablePromptCaching,
         options.querySource,
         useCachedMC,
-        consumedCacheEdits,
-        consumedPinnedEdits,
+        // The stub's CacheEditsBlock/PinnedCacheEdits type edits as unknown[];
+        // the local types pin the delete-edit shape. The stub only ever
+        // yields null/[] today.
+        consumedCacheEdits as CachedMCEditsBlock | null,
+        consumedPinnedEdits as CachedMCPinnedEdits[],
         options.skipCacheWrite,
       ),
       tools: allTools,
@@ -1833,26 +1877,42 @@ async function* queryModel(
           getAPIProvider() === 'firstParty' && isFirstPartyAnthropicBaseUrl()
             ? randomUUID()
             : undefined
+        const attemptApiCallKey = startActiveApiCall({
+          clientRequestId,
+          model: options.model,
+          querySource: options.querySource,
+          startedAt: start,
+        })
 
         // Use raw stream instead of BetaMessageStream to avoid O(n²) partial JSON parsing
         // BetaMessageStream calls partialParse() on every input_json_delta, which we don't need
         // since we handle tool input accumulation ourselves
         // biome-ignore lint/plugin: main conversation loop handles attribution separately
-        const result = await anthropic.beta.messages
-          .create(
-            { ...params, stream: true },
-            {
-              signal,
-              ...(clientRequestId && {
-                headers: { [CLIENT_REQUEST_ID_HEADER]: clientRequestId },
-              }),
-            },
-          )
-          .withResponse()
-        queryCheckpoint('query_response_headers_received')
-        streamRequestId = result.request_id
-        streamResponse = result.response
-        return result.data
+        try {
+          const result = await anthropic.beta.messages
+            .create(
+              { ...params, stream: true },
+              {
+                signal,
+                ...(clientRequestId && {
+                  headers: { [CLIENT_REQUEST_ID_HEADER]: clientRequestId },
+                }),
+              },
+            )
+            .withResponse()
+          queryCheckpoint('query_response_headers_received')
+          streamRequestId = result.request_id
+          if (attemptApiCallKey) {
+            options.queryLifecycle?.updateApiCall(attemptApiCallKey, {
+              requestId: streamRequestId,
+            })
+          }
+          streamResponse = result.response
+          return result.data
+        } catch (err) {
+          endActiveApiCall(attemptApiCallKey)
+          throw err
+        }
       },
       {
         model: options.model,
@@ -2302,8 +2362,10 @@ async function* queryModel(
               logEvent('tengu_max_tokens_reached', {
                 max_tokens: maxOutputTokens,
               })
+              const is3pProvider = shouldUseIntegrationRuntimeLimits()
+              const providerNoun = is3pProvider ? "Model's" : "OpenClaude's"
               yield createAssistantAPIErrorMessage({
-                content: `${API_ERROR_MESSAGE_PREFIX}: Claude's response exceeded the ${
+                content: `${API_ERROR_MESSAGE_PREFIX}: ${providerNoun} response exceeded the ${
                   maxOutputTokens
                 } output token maximum. To configure this behavior, set the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment variable.`,
                 apiError: 'max_output_tokens',
@@ -2583,6 +2645,7 @@ async function* queryModel(
           ? 'watchdog'
           : 'other') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       })
+      endActiveApiCall()
       const result = yield* executeNonStreamingRequest(
         { model: options.model, source: options.querySource, providerOverride: options.providerOverride, effortValue: effort },
         {
@@ -2601,6 +2664,7 @@ async function* queryModel(
         },
         params => captureAPIRequest(params, options.querySource),
         streamRequestId,
+        options.queryLifecycle,
       )
 
       const m: AssistantMessage = {
@@ -2682,14 +2746,21 @@ async function* queryModel(
 
       try {
         // Fall back to non-streaming mode
+        endActiveApiCall()
         const result = yield* executeNonStreamingRequest(
-          { model: options.model, source: options.querySource, effortValue: effort },
+          {
+            model: options.model,
+            source: options.querySource,
+            providerOverride: options.providerOverride,
+            effortValue: effort,
+          },
           {
             model: options.model,
             fallbackModel: options.fallbackModel,
             thinkingConfig,
             ...(isFastModeEnabled() && { fastMode: isFastMode }),
             signal,
+            querySource: options.querySource,
           },
           paramsFromContext,
           (attempt, _startTime, tokens) => {
@@ -2698,6 +2769,7 @@ async function* queryModel(
           },
           params => captureAPIRequest(params, options.querySource),
           failedRequestId,
+          options.queryLifecycle,
         )
 
         const m: AssistantMessage = {
@@ -2839,6 +2911,7 @@ async function* queryModel(
       return
     }
   } finally {
+    endActiveApiCall()
     stopSessionActivity('api_call')
     // Must be in the finally block: if the generator is terminated early
     // via .return() (e.g. consumer breaks out of for-await-of, or query.ts

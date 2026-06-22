@@ -32,7 +32,7 @@ export function addMemory(trigger: MemoryTrigger, ...args: unknown[]): void {
 
   const memoryFn = MEMORY_TRIGGERS[trigger]
   if (!memoryFn) return
-  const text = memoryFn(...(args as [never]))
+  const text = (memoryFn as any)(...args)
 
   if (existing.some(m => m.text === text)) return
 
