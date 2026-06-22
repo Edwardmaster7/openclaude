@@ -1577,7 +1577,7 @@ async function* openaiStreamToAnthropic(
           clearTimeout(timeoutId)
           if (signal && abortCleanup) signal.removeEventListener('abort', abortCleanup)
           if (!result.done && result.value) lastDataTime = Date.now()
-          resolve(result as ReadableStreamReadResult<Uint8Array>)
+          resolve(result as ReadResult)
         },
         err => {
           clearTimeout(timeoutId)
