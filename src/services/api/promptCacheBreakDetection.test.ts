@@ -57,6 +57,10 @@ const PROVIDER_ENV_KEYS = [
   'OPENAI_BASE_URL',
   'OPENAI_API_BASE',
   'OPENAI_MODEL',
+  'NVIDIA_NIM',
+  'NVIDIA_API_KEY',
+  'CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED',
+  'CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED_ID',
 ] as const
 
 const originalEnv: Record<string, string | undefined> = {}

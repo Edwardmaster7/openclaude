@@ -75,7 +75,12 @@ describe('modelSupportsThinking — Z.AI GLM', () => {
     process.env.OPENAI_BASE_URL = 'https://api.z.ai/api/coding/paas/v4'
     const { modelSupportsThinking } = await importFreshThinkingModule()
 
-    // ZAI specific tests temporarily disabled for conflict resolution
+    expect(modelSupportsThinking('GLM-5.1')).toBe(true)
+    expect(modelSupportsThinking('GLM-5-Turbo')).toBe(true)
+    expect(modelSupportsThinking('GLM-4.7')).toBe(true)
+    expect(modelSupportsThinking('GLM-4.5-Air')).toBe(true)
+    expect(modelSupportsThinking('glm-5.2?thinking=disabled')).toBe(true)
+    expect(modelSupportsThinking('glm-5.2 ?thinking=disabled')).toBe(true)
   })
 
   test('does not enable GLM thinking on non-Z.AI OpenAI-compatible endpoints', async () => {
