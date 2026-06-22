@@ -26,7 +26,9 @@ import {
   getUnlockedOutfits,
   getActiveOutfit,
   equipOutfit,
+  unequipOutfit,
   equipHat,
+  unequipHat,
   checkAndUnlockOutfits,
   getOutfitRequirements,
   getHatRequirements,
@@ -60,6 +62,8 @@ import {
   hasAbility,
   formatAbilities,
 } from "../../buddy/shop.js";
+
+import { getTodayQuests, getTodayString } from '../../buddy/quests.js'
 
 const NAME_PREFIXES = [
   "Byte",
@@ -109,7 +113,6 @@ function titleCase(s: string): string {
 
 function createStoredCompanion(): StoredCompanion {
   const userId = companionUserId();
-  const { bones } = rollWithSeed(`${userId}:buddy`);
   const prefix = pickDeterministic(NAME_PREFIXES, `${userId}:prefix`);
   const suffix = pickDeterministic(NAME_SUFFIXES, `${userId}:suffix`);
   const personality = pickDeterministic(PERSONALITIES, `${userId}:personality`);
@@ -137,9 +140,9 @@ function setCompanionReaction(
 
 function showHelp(onDone: LocalJSXCommandOnDone): void {
   onDone(
-    "Uso: /buddy [status|mute|unmute|compact|decompact|preview|rename|reroll|brincar|alimentar|stats|outfits|equipar|outfit|resumo|lembrar|memorias|evolve|requisitos|pet premium|help]\n\nExecute /buddy sem argumentos para chocar seu companion na primeira vez, depois acaricie nas próximas.\n\nFontes de XP:\n  Bash com sucesso: +0.1 XP\n  Pet diário: +1 XP (primeiro /buddy do dia)\n  Task concluída: +3 XP\n  Alimentar: +0.5 XP (cooldown: 1h)\n  Brincar: +0.5 XP (cooldown: 1h)\n  Easter eggs: +3 a +20 XP\n\nComandos:\n  /buddy rename <nome> — Custo: 5 XP, Requer Level 2\n  /buddy reroll — Custo: 15 XP (Rerrola atributos mantendo a espécie)\n  /buddy reroll especie — Custo: 50 XP (Rerrola para outra espécie do mesmo Tier de evolução)\n  /buddy brincar — Brinque com seu buddy (+0.5 XP, cooldown: 1h)\n  /buddy alimentar — Alimente seu buddy (+0.5 XP, cooldown: 1h)\n  /buddy pet premium — Ativa modo premium 1h (1 XP)\n  /buddy outfit <nome> — Equipa outfit (2 XP)\n  /buddy evolve — Evolui species (50 XP, Level 5+)\n  /buddy compact — Modo compacto (face de 1 linha)\n  /buddy decompact — Modo completo (sprite 24x10)\n  /buddy preview — Mostra todas as espécies\n  /buddy stats — Mostra estatísticas do buddy\n  /buddy resumo — Resumo da sessão (Level 4+)\n  /buddy outfits — Veja os outfits disponíveis\n  /buddy equipar <nome> — Equipe um outfit\n  /buddy chapeu <nome> — Troque seu chapéu\n  /buddy requisitos — Veja requisitos de outfits e chapéus\n  /buddy lembrar <min> <texto> — Define um lembrete\n  /buddy memorias — Veja as memórias do seu buddy\n  /buddy journal — Diário de hoje\n  /buddy achievements — Veja suas conquistas\n  /buddy shop — Visite a loja de itens\n  /buddy shop <categoria> — Filtra por categoria\n  /buddy buy <item-id> — Compra um item com XP\n  /buddy equip <item-id> — Equipa um item\n  /buddy unequip <item-id> — Desequipa um item\n  /buddy inventory — Veja seus itens\n  /buddy abilities — Veja abilities ativas\n  /buddy draw [comum|raro|epico] — Lucky Draw",
-    { display: "system" },
-  );
+    "Uso: /buddy [status|mute|unmute|compact|decompact|preview|rename|reroll|brincar|alimentar|hidratei|quests|stats|outfits|equipar|outfit|chapeu|resumo|lembrar|memorias|evolve|requisitos|pet premium|achievements|journal|shop|buy|equip|unequip|inventory|abilities|draw|help]\n\nExecute /buddy sem argumentos para chocar seu companion na primeira vez, depois acaricie nas próximas.\n\nFontes de XP:\n  Bash com sucesso: +0.1 XP\n  Read/Write/Edit/Search: +0.1 XP\n  Pet diário: +1 XP (primeiro /buddy do dia)\n  Task concluída: +3 XP\n  Alimentar: +0.5 XP (cooldown: 1h)\n  Brincar: +0.5 XP (cooldown: 1h)\n  Hidratei: +0.5 XP (cooldown: 1h)\n  Quests: +1 a +5 XP (diário)\n  Easter eggs: +3 a +20 XP\n\nComandos:\n  /buddy rename <nome> — Custo: 5 XP, Requer Level 2\n  /buddy reroll — Gratuito (Temporariamente)\n  /buddy reroll especie — Custo: 50 XP (Rerrola para outra espécie do mesmo Tier de evolução)\n  /buddy brincar — Brinque com seu buddy (+0.5 XP, cooldown: 1h)\n  /buddy alimentar — Alimente seu buddy (+0.5 XP, cooldown: 1h)\n  /buddy hidratei — Avisa que você bebeu água e arrumou a postura (+0.5 XP, cooldown: 1h)\n  /buddy quests — Veja suas missões diárias\n  /buddy pet premium — Ativa modo premium 1h (1 XP)\n  /buddy outfit <nome> — Equipa outfit (2 XP)\n  /buddy evolve — Evolui species (50 XP, Level 4+)\n  /buddy compact — Modo compacto (face de 1 linha)\n  /buddy decompact — Modo completo (sprite 24x10)\n  /buddy preview — Mostra todas as espécies\n  /buddy stats — Mostra estatísticas do buddy\n  /buddy resumo — Resumo da sessão (Level 4+)\n  /buddy outfits — Veja os outfits disponíveis\n  /buddy equipar <nome> — Equipe um outfit\n  /buddy chapeu <nome> — Troque seu chapéu\n  /buddy requisitos — Veja requisitos de outfits e chapéus\n  /buddy lembrar <min> <texto> — Define um lembrete\n  /buddy memorias — Veja as memórias do seu buddy\n  /buddy journal — Diário de hoje\n  /buddy achievements — Veja suas conquistas\n  /buddy shop — Visite a loja de itens\n  /buddy shop <categoria> — Filtra por categoria\n  /buddy buy <item-id> — Compra um item com XP\n  /buddy equip <item-id> — Equipa um item\n  /buddy unequip <item-id> — Desequipa um item\n  /buddy inventory — Veja seus itens\n  /buddy abilities — Veja abilities ativas\n  /buddy draw [comum|raro|epico] — Lucky Draw",
+    { display: 'system' },
+  )
 }
 
 export async function call(
@@ -236,6 +239,27 @@ Humor: ${mood.emoji} "${mood.text}"${evolvedFrom}`,
       });
       return null;
     }
+
+    // Force observer validation for 'stats' to complete itself
+    saveGlobalConfig(current => {
+      const today = getTodayString()
+      let questData = current.companionQuests
+      if (questData?.date !== today) questData = { date: today, completed: {} }
+
+      const q = getTodayQuests().find(q => q.id === 'buddy_stats')
+      if (q && !questData.completed[q.id]) {
+        questData.completed[q.id] = true
+        return {
+          ...current,
+          companionQuests: questData,
+          companion: current.companion ? {
+            ...current.companion,
+            xp: Math.round(((current.companion.xp ?? 0) + q.xpReward) * 10) / 10
+          } : undefined
+        }
+      }
+      return current
+    })
 
     const config = getGlobalConfig();
     const stats = config.companionStats ?? {
@@ -531,6 +555,27 @@ Humor: ${mood.emoji} "${mood.text}"${evolvedFrom}`,
       return null;
     }
 
+    // Force observer validation for 'brincar' to complete itself
+    saveGlobalConfig(current => {
+      const today = getTodayString()
+      let questData = current.companionQuests
+      if (questData?.date !== today) questData = { date: today, completed: {} }
+
+      const q = getTodayQuests().find(q => q.id === 'buddy_brincar')
+      if (q && !questData.completed[q.id]) {
+        questData.completed[q.id] = true
+        return {
+          ...current,
+          companionQuests: questData,
+          companion: current.companion ? {
+            ...current.companion,
+            xp: Math.round(((current.companion.xp ?? 0) + q.xpReward) * 10) / 10
+          } : undefined
+        }
+      }
+      return current
+    })
+
     const config = getGlobalConfig();
     const lastBrincar = config.companionLastAction?.brincar ?? 0;
     const now = Date.now();
@@ -644,8 +689,127 @@ Humor: ${mood.emoji} "${mood.text}"${evolvedFrom}`,
     return null;
   }
 
-  if (arg === "outfits") {
-    const companion = getCompanion();
+  // Interação de saúde — hidratei
+  if (arg === 'hidratei') {
+    const companion = getCompanion()
+    if (!companion) {
+      onDone('Nenhum buddy ainda. Use /buddy para criar um.', { display: 'system' })
+      return null
+    }
+
+    // Force observer validation for 'hidratei' to complete itself
+    saveGlobalConfig(current => {
+      const today = getTodayString()
+      let questData = current.companionQuests
+      if (questData?.date !== today) questData = { date: today, completed: {} }
+
+      const q = getTodayQuests().find(q => q.id === 'buddy_hidratei')
+      if (q && !questData.completed[q.id]) {
+        questData.completed[q.id] = true
+        return {
+          ...current,
+          companionQuests: questData,
+          companion: current.companion ? {
+            ...current.companion,
+            xp: Math.round(((current.companion.xp ?? 0) + q.xpReward) * 10) / 10
+          } : undefined
+        }
+      }
+      return current
+    })
+
+    const config = getGlobalConfig()
+    const lastHidratei = config.companionLastAction?.hidratei ?? 0
+    const now = Date.now()
+    const cooldown = 60 * 60 * 1000 // 1 hora
+
+    const reactions = [
+      `${companion.name} enche um copinho de água também! 🥤`,
+      `${companion.name} aprova sua postura de não-camarão! 🦐🚫`,
+      `${companion.name} faz um brinde com sua garrafinha d'água! 🚰`,
+      `${companion.name} sorri ao ver você cuidando da saúde! 🧘`,
+    ]
+    const reaction = reactions[Math.floor(Date.now() / 1000) % reactions.length]!
+
+    if (now - lastHidratei < cooldown) {
+      // Já ganhou XP recentemente, mas vamos registrar a ação para o humor e dar a mensagem normal (sem XP extra).
+      saveGlobalConfig(current => ({
+        ...current,
+        companionLastAction: {
+          ...current.companionLastAction,
+          hidratei: now,
+        },
+      }))
+      setCompanionReaction(context, reaction, true)
+      onDone(`Boa! Postura reta e hidratado! (XP em cooldown)`, { display: 'system' })
+      return null
+    }
+
+    // +0.5 XP por hidratar/postura (primeira vez na hora)
+    const xp = companion.xp ?? 0
+    const newXp = Math.round((xp + 0.5) * 10) / 10
+
+    saveGlobalConfig(current => ({
+      ...current,
+      companionLastAction: {
+        ...current.companionLastAction,
+        hidratei: now,
+      },
+      companion: current.companion ? {
+        ...current.companion,
+        xp: newXp,
+      } : undefined,
+    }))
+
+    setCompanionReaction(context, reaction, true)
+    onDone(`Boa! Postura reta e hidratado! (+0.5 XP)`, { display: 'system' })
+    return null
+  }
+
+  if (arg === 'quests') {
+    const companion = getCompanion()
+    if (!companion) {
+      onDone('Nenhum buddy ainda. Use /buddy para criar um.', { display: 'system' })
+      return null
+    }
+
+    // Force observer validation for 'quests' to complete itself
+    saveGlobalConfig(current => {
+      const today = getTodayString()
+      let questData = current.companionQuests
+      if (questData?.date !== today) questData = { date: today, completed: {} }
+
+      const q = getTodayQuests().find(q => q.id === 'buddy_quests')
+      if (q && !questData.completed[q.id]) {
+        questData.completed[q.id] = true
+        return {
+          ...current,
+          companionQuests: questData,
+          companion: current.companion ? {
+            ...current.companion,
+            xp: Math.round(((current.companion.xp ?? 0) + q.xpReward) * 10) / 10
+          } : undefined
+        }
+      }
+      return current
+    })
+
+    const quests = getTodayQuests()
+    const config = getGlobalConfig()
+    const today = getTodayString()
+    const questData = config.companionQuests?.date === today ? config.companionQuests : { completed: {} }
+
+    const list = quests.map(q => {
+      const isCompleted = questData.completed[q.id]
+      return `  [${isCompleted ? 'x' : ' '}] ${q.description} (+${q.xpReward} XP)`
+    }).join('\n')
+
+    onDone(`📋 Missões Diárias do ${companion.name}:\n\n${list}`, { display: 'system' })
+    return null
+  }
+
+  if (arg === 'outfits') {
+    const companion = getCompanion()
     if (!companion) {
       onDone("Nenhum buddy ainda. Use /buddy para criar um.", {
         display: "system",
@@ -653,8 +817,29 @@ Humor: ${mood.emoji} "${mood.text}"${evolvedFrom}`,
       return null;
     }
 
-    const unlocked = getUnlockedOutfits();
-    const active = getActiveOutfit();
+    // Force observer validation for 'outfits' to complete itself
+    saveGlobalConfig(current => {
+      const today = getTodayString()
+      let questData = current.companionQuests
+      if (questData?.date !== today) questData = { date: today, completed: {} }
+
+      const q = getTodayQuests().find(q => q.id === 'buddy_outfits')
+      if (q && !questData.completed[q.id]) {
+        questData.completed[q.id] = true
+        return {
+          ...current,
+          companionQuests: questData,
+          companion: current.companion ? {
+            ...current.companion,
+            xp: Math.round(((current.companion.xp ?? 0) + q.xpReward) * 10) / 10
+          } : undefined
+        }
+      }
+      return current
+    })
+
+    const unlocked = getUnlockedOutfits()
+    const active = getActiveOutfit()
 
     const list = OUTFITS.map((o) => {
       const isUnlocked = unlocked.includes(o.id);
@@ -682,6 +867,13 @@ Humor: ${mood.emoji} "${mood.text}"${evolvedFrom}`,
         "Uso: /buddy equipar <nome do outfit>\nVeja os outfits disponíveis com /buddy outfits",
         { display: "system" },
       );
+      return null;
+    }
+
+    if (outfitName === "nenhum" || outfitName === "none" || outfitName === "remover") {
+      unequipOutfit();
+      setCompanionReaction(context, `${companion.name}: Ah... de volta ao normal!`, true);
+      onDone(`Outfit removido com sucesso!`, { display: "system" });
       return null;
     }
 
@@ -737,6 +929,13 @@ Humor: ${mood.emoji} "${mood.text}"${evolvedFrom}`,
         `🎩 Chapéus do ${companion.name}:\n${list}\n\nUse /buddy chapeu <nome> para equipar.`,
         { display: "system" },
       );
+      return null;
+    }
+
+    if (hatName === "nenhum" || hatName === "none" || hatName === "remover") {
+      unequipHat();
+      setCompanionReaction(context, `${companion.name}: Cabelos ao vento!`, true);
+      onDone(`Chapéu removido com sucesso!`, { display: "system" });
       return null;
     }
 
@@ -834,6 +1033,13 @@ Humor: ${mood.emoji} "${mood.text}"${evolvedFrom}`,
       return null;
     }
 
+    if (outfitName === "nenhum" || outfitName === "none" || outfitName === "remover") {
+      unequipOutfit();
+      setCompanionReaction(context, `${companion.name}: Ah... de volta ao normal!`, true);
+      onDone(`Outfit removido com sucesso!`, { display: "system" });
+      return null;
+    }
+
     const outfit = OUTFITS.find(
       (o) => o.name.toLowerCase() === outfitName || o.id === outfitName,
     );
@@ -882,7 +1088,7 @@ Humor: ${mood.emoji} "${mood.text}"${evolvedFrom}`,
     return null;
   }
 
-  // Evolução: 50 XP, Level 5+, cadeia fixa
+  // Evolução: 50 XP, Level 4+, cadeia fixa
   if (baseCommand === "evolve") {
     const companion = getCompanion();
     if (!companion) {
@@ -895,9 +1101,9 @@ Humor: ${mood.emoji} "${mood.text}"${evolvedFrom}`,
     const xp = companion.xp ?? 0;
     const levelInfo = getLevelInfo(xp);
 
-    if (levelInfo.level < 5) {
+    if (levelInfo.level < 4) {
       onDone(
-        `Evolução requer Level 5. Seu buddy está no Level ${levelInfo.level}.`,
+        `Evolução requer Level 4. Seu buddy está no Level ${levelInfo.level}.`,
         { display: "system" },
       );
       return null;
@@ -966,6 +1172,28 @@ Humor: ${mood.emoji} "${mood.text}"${evolvedFrom}`,
       });
       return null;
     }
+
+    // Force observer validation for 'journal' if run as a direct hook (bypass standard observer loop gap)
+    saveGlobalConfig(current => {
+      const today = getTodayString()
+      let questData = current.companionQuests
+      if (questData?.date !== today) questData = { date: today, completed: {} }
+
+      const q = getTodayQuests().find(q => q.id === 'buddy_journal')
+      if (q && !questData.completed[q.id]) {
+        questData.completed[q.id] = true
+        return {
+          ...current,
+          companionQuests: questData,
+          companion: current.companion ? {
+            ...current.companion,
+            xp: Math.round(((current.companion.xp ?? 0) + q.xpReward) * 10) / 10
+          } : undefined
+        }
+      }
+      return current
+    })
+
     const entry = getTodayJournal();
     onDone(formatJournal(entry), { display: "system" });
     return null;
@@ -1221,6 +1449,27 @@ Humor: ${mood.emoji} "${mood.text}"${evolvedFrom}`,
     );
     return null;
   }
+
+  // Force observer validation for pure '/buddy' (pet) to complete itself immediately
+  saveGlobalConfig(current => {
+    const todayStr = getTodayString()
+    let questData = current.companionQuests
+    if (questData?.date !== todayStr) questData = { date: todayStr, completed: {} }
+
+    const q = getTodayQuests().find(q => q.id === 'buddy_pet')
+    if (q && !questData.completed[q.id]) {
+      questData.completed[q.id] = true
+      return {
+        ...current,
+        companionQuests: questData,
+        companion: current.companion ? {
+          ...current.companion,
+          xp: Math.round(((current.companion.xp ?? 0) + q.xpReward) * 10) / 10
+        } : undefined
+      }
+    }
+    return current
+  })
 
   // Increment pet count
   saveGlobalConfig((current) => ({

@@ -6,6 +6,7 @@ export type ReminderState = {
   lastActivityTime: number
   hasTriggeredSessionReminder: boolean
   hasTriggeredIdleReminder: boolean
+  hasTriggeredHealthReminder: boolean
 }
 
 export const createInitialReminderState = (): ReminderState => ({
@@ -13,6 +14,7 @@ export const createInitialReminderState = (): ReminderState => ({
   lastActivityTime: Date.now(),
   hasTriggeredSessionReminder: false,
   hasTriggeredIdleReminder: false,
+  hasTriggeredHealthReminder: false,
 })
 
 // Global state for default usage
@@ -21,6 +23,7 @@ let globalState = createInitialReminderState()
 // Constants for time
 export const ONE_HOUR = 60 * 60 * 1000
 export const FIFTEEN_MINS = 15 * 60 * 1000
+export const NINETY_MINS = 90 * 60 * 1000
 
 export function updateActivityTracker(state: ReminderState = globalState, now = Date.now()) {
   state.lastActivityTime = now
@@ -36,6 +39,21 @@ export function checkProductivityReminders(
 
   const timeSinceStart = now - state.sessionStartTime
   const timeSinceLastAction = now - state.lastActivityTime
+
+  // Health reminder (posture & water)
+  const lastHealthAction = getGlobalConfig().companionLastAction?.hidratei ?? state.sessionStartTime
+  const timeSinceHealthAction = now - lastHealthAction
+  if (timeSinceHealthAction < NINETY_MINS) {
+    state.hasTriggeredHealthReminder = false
+  } else if (!state.hasTriggeredHealthReminder) {
+    state.hasTriggeredHealthReminder = true
+    const healthMessages = [
+      "Ei! Já faz 90 minutos. Beba uma água e arrume essa postura! 💧🦴",
+      "Postura de camarão não! 🦐 Ajeita as costas e toma uma água, já faz um tempo! 🚰",
+      "Pausa pra hidratação! Aproveita e dá uma esticada nas costas. Seu corpo agradece! 🧘",
+    ]
+    return healthMessages[Math.floor(Math.random() * healthMessages.length)]!
+  }
 
   // 1. Session reminder (working for too long)
   if (timeSinceStart > ONE_HOUR && !state.hasTriggeredSessionReminder) {
