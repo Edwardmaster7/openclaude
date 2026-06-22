@@ -40,6 +40,11 @@ mock.module('../memdir/feedbackLog.js', () => ({
   logFeedbackEvent: () => {},
 }))
 
+mock.module('./quests.js', () => ({
+  getTodayQuests: () => [],
+  getTodayString: () => '2026-06-22',
+}))
+
 import { fireCompanionObserver, notifyFeedbackConfirm } from './observer.js'
 
 function getTodayString(): string {
@@ -444,7 +449,7 @@ describe('observer reactions', () => {
       const messages = [
         {
           type: 'user',
-          message: { content: [{ type: 'text', text: '/buddy status' }] },
+          message: { content: [{ type: 'text', text: '/buddy' }] },
         },
       ] as any[]
 

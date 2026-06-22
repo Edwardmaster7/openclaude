@@ -4,6 +4,14 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import React from 'react'
 
+if (typeof (globalThis as any).MACRO === 'undefined') {
+  ;(globalThis as any).MACRO = { VERSION: '0.17.0', DISPLAY_VERSION: '0.17.0' }
+}
+if (!process.env.ANTHROPIC_API_KEY) {
+  process.env.ANTHROPIC_API_KEY = 'sk-mock-key-for-export-tests'
+}
+
+
 import type { ExportFormat } from '../../utils/exportFormats.js'
 
 let importCounter = 0

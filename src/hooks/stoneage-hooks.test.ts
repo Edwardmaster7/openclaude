@@ -4,7 +4,7 @@ import * as path from 'path'
 import * as os from 'os'
 
 // Import the config module
-const configPath = path.resolve(__dirname, '../../../.claude/plugins/stoneage/src/hooks/stoneage-config.js')
+const configPath = path.resolve(__dirname, '../../plugins/stoneage/src/hooks/stoneage-config.js')
 
 describe('Stoneage Config', () => {
   let tempDir: string
