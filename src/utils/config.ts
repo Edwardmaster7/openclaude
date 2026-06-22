@@ -341,6 +341,10 @@ export type GlobalConfig = {
     solitarioCount: number
     lossesThisSession: number
   }
+  companionQuests?: {
+    date: string
+    completed: Record<string, boolean>
+  }
 
   // Feedback survey tracking
   feedbackSurveyState?: {

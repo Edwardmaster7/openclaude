@@ -5,7 +5,7 @@ import { getAutoMemPath } from '../memdir/paths.js'
 export type BuddyMood = {
   emoji: string
   text: string
-  mood: 'feliz' | 'orgulhoso' | 'preocupado' | 'sonolento' | 'empolgado' | 'neutro'
+  mood: 'feliz' | 'orgulhoso' | 'preocupado' | 'sonolento' | 'empolgado' | 'neutro' | 'refrescado'
 }
 
 async function getFeedbackMood(): Promise<BuddyMood | null> {
@@ -57,6 +57,12 @@ export async function getMood(): Promise<BuddyMood> {
       text: 'Modo premium ativado! Tô em chamas!',
       mood: 'empolgado',
     }
+  }
+
+  // Refrescado: tomou água / posturou recentemente (30 mins)
+  const lastHidratei = config.companionLastAction?.hidratei ?? 0
+  if (now.getTime() - lastHidratei < 30 * 60 * 1000) {
+    return { emoji: '🧊', text: 'Bem hidratado e com boa postura!', mood: 'refrescado' }
   }
 
   // Sonolento: não pet hoje
