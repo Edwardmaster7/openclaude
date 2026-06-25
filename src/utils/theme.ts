@@ -100,6 +100,14 @@ export const THEME_NAMES = [
   'dark-daltonized',
   'light-ansi',
   'dark-ansi',
+  'dracula',
+  'nord',
+  'monokai',
+  'solarized-dark',
+  'solarized-light',
+  'gruvbox',
+  'synthwave84',
+  'cyberpunk',
 ] as const
 
 /** A renderable theme. Always resolvable to a concrete color palette. */
@@ -612,21 +620,187 @@ const darkDaltonizedTheme: Theme = {
   rainbow_violet_shimmer: 'rgb(230,180,210)',
 }
 
+const draculaTheme: Theme = {
+  ...darkTheme,
+  claude: 'rgb(189,147,249)', // Dracula Purple
+  claudeShimmer: 'rgb(219,177,255)',
+  brand: 'rgb(189,147,249)',
+  brandShimmer: 'rgb(219,177,255)',
+  promptBorder: 'rgb(98,114,164)', // Comment color
+  promptBorderShimmer: 'rgb(128,144,194)',
+  selectionBg: 'rgb(68,71,90)', // Selection color
+  userMessageBackground: 'rgb(40,42,54)', // Current line/bg
+  success: 'rgb(80,250,123)', // Dracula Green
+  error: 'rgb(255,85,85)', // Dracula Red
+  warning: 'rgb(241,250,140)', // Dracula Yellow
+}
+
+const nordTheme: Theme = {
+  ...darkTheme,
+  claude: 'rgb(136,192,208)', // Nord Frost Blue
+  claudeShimmer: 'rgb(166,222,238)',
+  brand: 'rgb(143,188,187)',
+  brandShimmer: 'rgb(173,218,217)',
+  promptBorder: 'rgb(76,86,106)',
+  promptBorderShimmer: 'rgb(106,116,136)',
+  selectionBg: 'rgb(67,76,94)',
+  userMessageBackground: 'rgb(46,52,64)',
+  success: 'rgb(163,190,140)',
+  error: 'rgb(191,97,106)',
+  warning: 'rgb(235,203,139)',
+}
+
+const monokaiTheme: Theme = {
+  ...darkTheme,
+  claude: 'rgb(249,38,114)', // Monokai Pink
+  claudeShimmer: 'rgb(255,68,144)',
+  brand: 'rgb(166,226,46)', // Monokai Green
+  brandShimmer: 'rgb(196,255,76)',
+  promptBorder: 'rgb(117,113,94)',
+  promptBorderShimmer: 'rgb(147,143,124)',
+  selectionBg: 'rgb(73,71,62)',
+  userMessageBackground: 'rgb(39,40,34)',
+  success: 'rgb(166,226,46)',
+  error: 'rgb(249,38,114)',
+  warning: 'rgb(230,219,116)',
+}
+
+const solarizedDarkTheme: Theme = {
+  ...darkTheme,
+  claude: 'rgb(38,139,210)', // Solarized Blue
+  claudeShimmer: 'rgb(68,169,240)',
+  brand: 'rgb(42,161,152)', // Cyan
+  brandShimmer: 'rgb(72,191,182)',
+  promptBorder: 'rgb(88,110,117)',
+  promptBorderShimmer: 'rgb(101,123,131)',
+  selectionBg: 'rgb(7,54,66)',
+  userMessageBackground: 'rgb(0,43,54)',
+  success: 'rgb(133,153,0)', // Green
+  error: 'rgb(220,50,47)', // Red
+  warning: 'rgb(181,137,0)', // Yellow
+}
+
+const solarizedLightTheme: Theme = {
+  ...lightTheme,
+  claude: 'rgb(38,139,210)',
+  claudeShimmer: 'rgb(68,169,240)',
+  brand: 'rgb(42,161,152)',
+  brandShimmer: 'rgb(72,191,182)',
+  promptBorder: 'rgb(147,161,161)',
+  promptBorderShimmer: 'rgb(131,148,150)',
+  selectionBg: 'rgb(238,232,213)',
+  userMessageBackground: 'rgb(253,246,227)',
+  success: 'rgb(133,153,0)',
+  error: 'rgb(220,50,47)',
+  warning: 'rgb(181,137,0)',
+}
+
+const gruvboxTheme: Theme = {
+  ...darkTheme,
+  claude: 'rgb(250,189,47)', // Gruvbox Yellow
+  claudeShimmer: 'rgb(255,219,77)',
+  brand: 'rgb(254,128,25)', // Gruvbox Orange
+  brandShimmer: 'rgb(255,158,55)',
+  promptBorder: 'rgb(146,131,116)',
+  promptBorderShimmer: 'rgb(166,151,136)',
+  selectionBg: 'rgb(80,73,69)',
+  userMessageBackground: 'rgb(40,40,40)',
+  success: 'rgb(184,187,38)',
+  error: 'rgb(251,73,52)',
+  warning: 'rgb(250,189,47)',
+}
+
+const synthwave84Theme: Theme = {
+  ...darkTheme,
+  claude: 'rgb(255,126,219)', // Neon Pink
+  claudeShimmer: 'rgb(255,156,249)',
+  brand: 'rgb(54,241,205)', // Neon Teal
+  brandShimmer: 'rgb(84,255,235)',
+  promptBorder: 'rgb(67,51,122)',
+  promptBorderShimmer: 'rgb(97,81,152)',
+  selectionBg: 'rgb(45,20,80)',
+  userMessageBackground: 'rgb(38,15,64)',
+  success: 'rgb(54,241,205)',
+  error: 'rgb(254,68,91)',
+  warning: 'rgb(243,239,23)',
+}
+
+const cyberpunkTheme: Theme = {
+  ...darkTheme,
+  claude: 'rgb(0,255,102)', // Neon Green
+  claudeShimmer: 'rgb(50,255,152)',
+  brand: 'rgb(255,0,85)', // Hot Pink
+  brandShimmer: 'rgb(255,50,135)',
+  promptBorder: 'rgb(0,242,255)', // Cyber Blue
+  promptBorderShimmer: 'rgb(50,255,255)',
+  selectionBg: 'rgb(34,34,34)',
+  userMessageBackground: 'rgb(0,0,0)',
+  success: 'rgb(0,255,102)',
+  error: 'rgb(255,0,85)',
+  warning: 'rgb(255,242,0)',
+}
+
 export function getTheme(themeName: ThemeName): Theme {
+  let baseTheme: Theme
   switch (themeName) {
     case 'light':
-      return lightTheme
+      baseTheme = lightTheme
+      break
     case 'light-ansi':
-      return lightAnsiTheme
+      baseTheme = lightAnsiTheme
+      break
     case 'dark-ansi':
-      return darkAnsiTheme
+      baseTheme = darkAnsiTheme
+      break
     case 'light-daltonized':
-      return lightDaltonizedTheme
+      baseTheme = lightDaltonizedTheme
+      break
     case 'dark-daltonized':
-      return darkDaltonizedTheme
+      baseTheme = darkDaltonizedTheme
+      break
+    case 'dracula':
+      baseTheme = draculaTheme
+      break
+    case 'nord':
+      baseTheme = nordTheme
+      break
+    case 'monokai':
+      baseTheme = monokaiTheme
+      break
+    case 'solarized-dark':
+      baseTheme = solarizedDarkTheme
+      break
+    case 'solarized-light':
+      baseTheme = solarizedLightTheme
+      break
+    case 'gruvbox':
+      baseTheme = gruvboxTheme
+      break
+    case 'synthwave84':
+      baseTheme = synthwave84Theme
+      break
+    case 'cyberpunk':
+      baseTheme = cyberpunkTheme
+      break
     default:
-      return darkTheme
+      baseTheme = darkTheme
+      break
   }
+
+  try {
+    const { getInitialSettings } = require('./settings/settings.js')
+    const settings = getInitialSettings()
+    if (settings?.themeOverrides) {
+      return {
+        ...baseTheme,
+        ...settings.themeOverrides,
+      }
+    }
+  } catch {
+    // Fallback if settings module is not yet loaded or during bootstrap
+  }
+
+  return baseTheme
 }
 
 // Create a chalk instance with 256-color level for Apple Terminal

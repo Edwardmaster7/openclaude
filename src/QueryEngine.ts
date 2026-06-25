@@ -241,8 +241,40 @@ export class QueryEngine {
 
     this.discoveredSkillNames.clear()
     setCwd(cwd)
-    const persistSession = !isSessionPersistenceDisabled()
     const startTime = Date.now()
+    const { checkInternetConnection, isOfflineMode } = await import('src/services/api/offlineState.js')
+    await checkInternetConnection()
+    if (isOfflineMode()) {
+      yield {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: 'You are currently offline. Local commands and diagnostics are still available, but calls to the remote Claude API will fail. Please restore your internet connection to resume normal operations.',
+        },
+        session_id: getSessionId(),
+        uuid: randomUUID(),
+        timestamp: Date.now(),
+      } as any
+      yield {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        duration_ms: Date.now() - startTime,
+        duration_api_ms: 0,
+        num_turns: 0,
+        result: 'Offline mode active. Operations completed with offline fallback message.',
+        stop_reason: 'offline',
+        session_id: getSessionId(),
+        total_cost_usd: 0,
+        usage: EMPTY_USAGE,
+        modelUsage: {},
+        permission_denials: [],
+        fast_mode_state: { enabled: false },
+        uuid: randomUUID(),
+      } as any
+      return
+    }
+    const persistSession = !isSessionPersistenceDisabled()
 
     // Wrap canUseTool to track permission denials
     const wrappedCanUseTool: CanUseToolFn = async (
