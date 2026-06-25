@@ -675,6 +675,10 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Skip the WebFetch blocklist check for enterprise environments with restrictive security policies',
         ),
+      themeOverrides: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe('Custom color overrides for UI elements (e.g. borders, assist text, tool highlights)'),
       sandbox: SandboxSettingsSchema().optional(),
       feedbackSurveyRate: z
         .number()

@@ -116,25 +116,22 @@ export function ThemePicker({
     () => [
       ...(feature("AUTO_THEME")
         ? [{ label: "Auto (match terminal)", value: "auto" as const }]
-        : []), { 
-        label: "Dark mode",
-        value: "dark" as const 
-      }, { 
-        label: "Light mode",
-        value: "light" as const 
-      }, {
-        label: "Dark mode (colorblind-friendly)",
-        value: "dark-daltonized" as const,
-      }, {
-        label: "Light mode (colorblind-friendly)",
-        value: "light-daltonized" as const,
-      }, { 
-        label: "Dark mode (ANSI colors only)",
-        value: "dark-ansi" as const 
-      }, {
-        label: "Light mode (ANSI colors only)",
-        value: "light-ansi" as const 
-      },],
+        : []),
+      { label: "Dark mode", value: "dark" as const },
+      { label: "Light mode", value: "light" as const },
+      { label: "Dracula", value: "dracula" as const },
+      { label: "Nord", value: "nord" as const },
+      { label: "Monokai", value: "monokai" as const },
+      { label: "Solarized Dark", value: "solarized-dark" as const },
+      { label: "Solarized Light", value: "solarized-light" as const },
+      { label: "Gruvbox", value: "gruvbox" as const },
+      { label: "Synthwave '84", value: "synthwave84" as const },
+      { label: "Cyberpunk", value: "cyberpunk" as const },
+      { label: "Dark mode (colorblind-friendly)", value: "dark-daltonized" as const },
+      { label: "Light mode (colorblind-friendly)", value: "light-daltonized" as const },
+      { label: "Dark mode (ANSI colors only)", value: "dark-ansi" as const },
+      { label: "Light mode (ANSI colors only)", value: "light-ansi" as const },
+    ],
     [],
   )
 
