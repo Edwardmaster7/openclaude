@@ -1,4 +1,7 @@
 import Fuse from 'fuse.js'
+import { readdirSync, readFileSync } from 'fs'
+import { join, basename } from 'path'
+import { getSessionProjectDir } from '../../bootstrap/state.js'
 import {
   type Command,
   formatDescriptionWithSource,
@@ -449,6 +452,77 @@ export function generateCommandSuggestions(
   input: string,
   commands: Command[],
 ): SuggestionItem[] {
+  // Special case: sub-argument suggestions for known commands
+  if (input.startsWith('/ads ')) {
+    const arg = input.slice(5).toLowerCase().trim()
+    const options = ['on', 'off']
+    const matches = options.filter(opt => opt.startsWith(arg))
+    return matches.map(opt => ({
+      id: `ads:${opt}`,
+      displayText: `/ads ${opt}`,
+      description: opt === 'on' ? 'Enable sponsored tips to earn credits' : 'Disable sponsored tips',
+      metadata: commands.find(c => safeCommandName(c) === 'ads'),
+    }))
+  }
+
+  if (input.startsWith('/resume ')) {
+    const query = input.slice(8).toLowerCase().trim()
+    let files: string[] = []
+    let dir = ''
+    try {
+      dir = getSessionProjectDir() ?? ''
+      files = dir ? readdirSync(dir).filter(f => f.endsWith('.jsonl')) : []
+    } catch {
+      // directory doesn't exist yet
+    }
+
+    const suggestions: SuggestionItem[] = []
+    for (const file of files) {
+      const sessionId = basename(file, '.jsonl')
+      if (sessionId.toLowerCase().startsWith(query)) {
+        let title = 'Recent Session'
+        try {
+          const content = readFileSync(join(dir, file), 'utf8')
+          const firstLine = content.split('\n')[0]
+          if (firstLine) {
+            const parsed = JSON.parse(firstLine)
+            title = parsed.customTitle || parsed.firstPrompt || title
+          }
+        } catch {
+          // ignore
+        }
+        suggestions.push({
+          id: `resume:${sessionId}`,
+          displayText: `/resume ${sessionId}`,
+          description: title,
+          metadata: commands.find(c => safeCommandName(c) === 'resume'),
+        })
+      }
+    }
+    return suggestions.slice(0, 10)
+  }
+
+  if (input.startsWith('/config ')) {
+    const arg = input.slice(8).toLowerCase().trim()
+    const configKeys = [
+      'theme',
+      'language',
+      'editor',
+      'privacyLevel',
+      'allowedTools',
+      'mcpServers',
+      'enabledMcpServers',
+      'disabledMcpServers',
+    ]
+    const matches = configKeys.filter(key => key.toLowerCase().startsWith(arg))
+    return matches.map(key => ({
+      id: `config:${key}`,
+      displayText: `/config ${key}`,
+      description: `Configure ${key} option`,
+      metadata: commands.find(c => safeCommandName(c) === 'config'),
+    }))
+  }
+
   // Only process command input
   if (!isCommandInput(input)) {
     return []
