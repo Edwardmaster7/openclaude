@@ -9,6 +9,9 @@ import {
 
 const fullData: BuiltinStatusData = {
   modelName: 'Opus 4.8',
+  providerName: '',
+  offline: false,
+  tokenCount: 0,
   contextUsedPercent: 37.4,
   costUSD: 1.234,
   rateLimit: { label: '5h', usedPercent: 42 },
@@ -16,7 +19,10 @@ const fullData: BuiltinStatusData = {
 
 describe('buildBuiltinStatusSegments', () => {
   it('builds all segments when every datum is present', () => {
-    const segments = buildBuiltinStatusSegments(fullData)
+    const segments = buildBuiltinStatusSegments({
+      ...fullData,
+      tokenCount: 500, // Pass a positive token count to get a cost segment
+    })
     expect(segments.map(s => s.key)).toEqual([
       'model',
       'context',
@@ -26,7 +32,7 @@ describe('buildBuiltinStatusSegments', () => {
     expect(segments.map(s => s.text)).toEqual([
       'Opus 4.8',
       'ctx 37%',
-      '$1.23',
+      '500 tokens ($1.23)',
       '5h 42%',
     ])
   })
@@ -71,7 +77,10 @@ describe('buildBuiltinStatusSegments', () => {
 })
 
 describe('fitSegments', () => {
-  const segments = buildBuiltinStatusSegments(fullData)
+  const segments = buildBuiltinStatusSegments({
+    ...fullData,
+    tokenCount: 500,
+  })
   // 'Opus 4.8 · ctx 37% · $1.23 · 5h 42%' = 35 cols
 
   it('keeps everything when the line fits', () => {
@@ -79,7 +88,7 @@ describe('fitSegments', () => {
   })
 
   it('drops highest-priority-number segments first when narrow', () => {
-    const fitted = fitSegments(segments, 30)
+    const fitted = fitSegments(segments, 45)
     expect(fitted.map(s => s.key)).toEqual(['model', 'context', 'cost'])
   })
 
