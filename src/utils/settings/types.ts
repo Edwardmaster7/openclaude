@@ -1017,6 +1017,18 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Reduce or disable animations for accessibility (spinner shimmer, flash effects, etc.)',
         ),
+      isolateProviderSessions: z
+        .boolean()
+        .optional()
+        .describe('Isolate active provider and model to the terminal session'),
+      defaultProviderSaveScope: z
+        .enum(['global', 'project'])
+        .optional()
+        .describe('Default scope for saving active provider changes'),
+      activeProviderProfileId: z
+        .string()
+        .optional()
+        .describe('Active provider profile ID to load as default'),
       autoMemoryEnabled: z
         .boolean()
         .optional()

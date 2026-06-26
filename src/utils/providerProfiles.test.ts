@@ -90,6 +90,9 @@ function createMockConfigState(): MockConfigState {
 
 let mockConfigState: MockConfigState = createMockConfigState()
 let testConfigDir: string | null = null
+let mockUserSettings: any = {}
+let mockLocalSettings: any = {}
+let mockProjectSettings: any = {}
 
 function saveMockGlobalConfig(
   updater: (current: MockConfigState) => MockConfigState,
@@ -148,6 +151,24 @@ async function importFreshProviderProfileModules() {
     ) => {
       mockConfigState = updater(mockConfigState)
     },
+  }))
+  mock.module('./settings/settings.js', () => ({
+    getSettingsForSource: (source: string) => {
+      if (source === 'userSettings') return mockUserSettings
+      if (source === 'localSettings') return mockLocalSettings
+      if (source === 'projectSettings') return mockProjectSettings
+      return null
+    },
+    updateSettingsForSource: (source: string, update: any) => {
+      if (source === 'userSettings') {
+        mockUserSettings = { ...mockUserSettings, ...update }
+      } else if (source === 'localSettings') {
+        mockLocalSettings = { ...mockLocalSettings, ...update }
+      } else if (source === 'projectSettings') {
+        mockProjectSettings = { ...mockProjectSettings, ...update }
+      }
+      return { error: null }
+    }
   }))
   const nonce = `${Date.now()}-${Math.random()}`
   const registry = await import('../integrations/registry.js')
@@ -2808,4 +2829,112 @@ test('DEFAULT_MISTRAL_MODEL matches the mistral gateway defaultModel', async () 
   const { default: mistralGateway } = await import('../integrations/gateways/mistral.js')
   expect(mistralGateway.defaultModel).toBeDefined()
   expect(DEFAULT_MISTRAL_MODEL).toBe(mistralGateway.defaultModel!)
+})
+
+describe('isolateProviderSessions and defaultProviderSaveScope', () => {
+  let originalEnv: any
+
+  beforeEach(() => {
+    originalEnv = { ...process.env }
+    mockUserSettings = {}
+    mockLocalSettings = {}
+    mockProjectSettings = {}
+  })
+
+  afterEach(() => {
+    process.env = originalEnv
+  })
+
+  test('getActiveProviderProfile resolves settings hierarchy correctly', async () => {
+    const { getActiveProviderProfile } = await importFreshProviderProfileModules()
+
+    mockConfigState = {
+      ...createMockConfigState(),
+      providerProfiles: [
+        buildProfile({ id: 'profile_global_config', name: 'Global Config' }),
+        buildProfile({ id: 'profile_user', name: 'User Profile' }),
+        buildProfile({ id: 'profile_project', name: 'Project Profile' }),
+        buildProfile({ id: 'profile_local', name: 'Local Profile' }),
+      ],
+      activeProviderProfileId: 'profile_global_config',
+    }
+
+    // 1. Fallback to global config profile ID
+    let profile = getActiveProviderProfile()
+    expect(profile?.id).toBe('profile_global_config')
+
+    // 2. User settings override global config
+    mockUserSettings.activeProviderProfileId = 'profile_user'
+    profile = getActiveProviderProfile()
+    expect(profile?.id).toBe('profile_user')
+
+    // 3. Project settings override user settings
+    mockProjectSettings.activeProviderProfileId = 'profile_project'
+    profile = getActiveProviderProfile()
+    expect(profile?.id).toBe('profile_project')
+
+    // 4. Local settings override project settings
+    mockLocalSettings.activeProviderProfileId = 'profile_local'
+    profile = getActiveProviderProfile()
+    expect(profile?.id).toBe('profile_local')
+  })
+
+  test('setActiveProviderProfile respects defaultProviderSaveScope', async () => {
+    const { setActiveProviderProfile } = await importFreshProviderProfileModules()
+
+    mockConfigState = {
+      ...createMockConfigState(),
+      providerProfiles: [
+        buildProfile({ id: 'profile_1', name: 'Profile 1' }),
+        buildProfile({ id: 'profile_2', name: 'Profile 2' }),
+      ],
+    }
+
+    // Default save scope is global
+    mockUserSettings.defaultProviderSaveScope = 'global'
+    setActiveProviderProfile('profile_1')
+    expect(mockUserSettings.activeProviderProfileId).toBe('profile_1')
+    expect(mockLocalSettings.activeProviderProfileId).toBeUndefined()
+
+    // Save scope is project
+    mockUserSettings.defaultProviderSaveScope = 'project'
+    setActiveProviderProfile('profile_2')
+    expect(mockLocalSettings.activeProviderProfileId).toBe('profile_2')
+    expect(mockUserSettings.activeProviderProfileId).toBeUndefined()
+  })
+
+  test('isolateProviderSessions isolates changes between terminal sessions', async () => {
+    const { getActiveProviderProfile, setActiveProviderProfile } = await importFreshProviderProfileModules()
+
+    mockConfigState = {
+      ...createMockConfigState(),
+      providerProfiles: [
+        buildProfile({ id: 'profile_1', name: 'Profile 1' }),
+        buildProfile({ id: 'profile_2', name: 'Profile 2' }),
+      ],
+      activeProviderProfileId: 'profile_1',
+    }
+
+    mockUserSettings.isolateProviderSessions = true
+
+    // Simulate Session B startup (running concurrently)
+    process.env.TERM_SESSION_ID = 'session-b'
+    let profileB = getActiveProviderProfile()
+    expect(profileB?.id).toBe('profile_1')
+
+    // Simulate Session A startup
+    process.env.TERM_SESSION_ID = 'session-a'
+    let profileA = getActiveProviderProfile()
+    expect(profileA?.id).toBe('profile_1') // starts with default profile_1
+
+    // Switch to profile_2 in Session A
+    setActiveProviderProfile('profile_2')
+    profileA = getActiveProviderProfile()
+    expect(profileA?.id).toBe('profile_2') // locked onto profile_2 in Session A
+
+    // Verify Session B remains on its initial provider profile
+    process.env.TERM_SESSION_ID = 'session-b'
+    profileB = getActiveProviderProfile()
+    expect(profileB?.id).toBe('profile_1') // Session B is unaffected by Session A's change!
+  })
 })
