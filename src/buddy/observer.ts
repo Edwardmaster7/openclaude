@@ -767,7 +767,7 @@ export async function fireCompanionObserver(
   let lastBashContent = "";
   let bashCommandStr = "";
 
-  for (const msg of messages) {
+  for (const msg of messages as Array<{ type?: string; message?: any }>) {
     let toolResultBlocks: any[] = [];
     if (msg.type === "tool_result") {
       toolResultBlocks = [msg];

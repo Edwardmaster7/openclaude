@@ -7178,7 +7178,7 @@ test('clamps reasoning_effort to low/medium/high for Gemini models', async () =>
   }) as FetchType
 
   // Test 'max' => 'high'
-  const clientMax = createOpenAIShimClient({ reasoningEffort: 'max' }) as OpenAIShimClient
+  const clientMax = createOpenAIShimClient({ reasoningEffort: 'max' } as any) as OpenAIShimClient
   await clientMax.beta.messages.create({
     model: 'google/gemini-2.0-flash-thinking-exp',
     messages: [{ role: 'user', content: 'hi' }],

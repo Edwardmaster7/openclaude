@@ -273,7 +273,6 @@ import { CompanionSprite, CompanionFloatingBubble, MIN_COLS_FOR_FULL_SPRITE } fr
 import { isBuddyEnabled } from '../buddy/feature.js';
 import { fireCompanionObserver } from '../buddy/observer.js';
 import { getLastDetectedFeedback, clearLastDetectedFeedback } from '../hooks/feedbackHook.js';
-import { DevBar } from '../components/DevBar.js';
 // Session manager removed - using AppState now
 import type { RemoteSessionConfig } from '../remote/RemoteSessionManager.js';
 import { REMOTE_SAFE_COMMANDS } from '../commands.js';

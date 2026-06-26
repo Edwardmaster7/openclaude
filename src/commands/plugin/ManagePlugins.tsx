@@ -1861,7 +1861,7 @@ export function ManagePlugins({
             <Text>{selectedPlugin.plugin.manifest.description}</Text>
           </Box>}
 
-        {selectedPlugin.plugin.manifest.author && <Box>
+        {selectedPlugin.plugin.manifest.author && typeof selectedPlugin.plugin.manifest.author !== 'string' && <Box>
             <Text dimColor>Author: </Text>
             <Text>{selectedPlugin.plugin.manifest.author.name}</Text>
           </Box>}
