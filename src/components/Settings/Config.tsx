@@ -418,6 +418,56 @@ export function Config({
       });
     }
   }, {
+    id: 'isolateProviderSessions',
+    label: 'Isolate provider sessions',
+    value: settingsData?.isolateProviderSessions ?? false,
+    type: 'boolean' as const,
+    onChange(isolateProviderSessions: boolean) {
+      updateSettingsForSource('userSettings', {
+        isolateProviderSessions
+      });
+      setSettingsData(prev => ({
+        ...prev,
+        isolateProviderSessions
+      }));
+      setAppState(prev => ({
+        ...prev,
+        settings: {
+          ...prev.settings,
+          isolateProviderSessions
+        }
+      }));
+      logEvent('tengu_isolate_provider_sessions_changed', {
+        enabled: isolateProviderSessions
+      });
+    }
+  }, {
+    id: 'defaultProviderSaveScope',
+    label: 'Default provider scope',
+    value: settingsData?.defaultProviderSaveScope ?? 'global',
+    options: ['global', 'project'],
+    type: 'enum' as const,
+    onChange(defaultProviderSaveScope: string) {
+      const scope = defaultProviderSaveScope as 'global' | 'project';
+      updateSettingsForSource('userSettings', {
+        defaultProviderSaveScope: scope
+      });
+      setSettingsData(prev => ({
+        ...prev,
+        defaultProviderSaveScope: scope
+      }));
+      setAppState(prev => ({
+        ...prev,
+        settings: {
+          ...prev.settings,
+          defaultProviderSaveScope: scope
+        }
+      }));
+      logEvent('tengu_default_provider_save_scope_changed', {
+        scope: scope as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
+      });
+    }
+  }, {
     id: 'thinkingEnabled',
     label: 'Thinking mode',
     value: thinkingEnabled ?? true,
@@ -1369,6 +1419,8 @@ export function Config({
       autoUpdatesChannel: iu?.autoUpdatesChannel,
       minimumVersion: iu?.minimumVersion,
       language: iu?.language,
+      isolateProviderSessions: iu?.isolateProviderSessions,
+      defaultProviderSaveScope: iu?.defaultProviderSaveScope,
       ...(feature('TRANSCRIPT_CLASSIFIER') ? {
         useAutoModeDuringPlan: (iu as {
           useAutoModeDuringPlan?: boolean;
