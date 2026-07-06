@@ -9,6 +9,9 @@ import {
 
 const fullData: BuiltinStatusData = {
   modelName: 'Opus 4.8',
+  providerName: '',
+  offline: false,
+  tokenCount: 0,
   contextUsedPercent: 37.4,
   costUSD: 1.234,
   rateLimit: { label: '5h', usedPercent: 42 },

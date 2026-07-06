@@ -332,10 +332,6 @@ export type GlobalConfig = {
     lastShownAt: number
     totalShown: number
   }
-  ads?: {
-    enabled?: boolean
-    earnCode?: string
-  }
 
   // /buddy companion soul — bones regenerated from userId on read. See src/buddy/.
   companion?: import('../buddy/types.js').StoredCompanion
