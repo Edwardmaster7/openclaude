@@ -1,7 +1,7 @@
-import chalk from 'chalk'
 import { color } from '../../components/design-system/color.js'
 import { getGlobalConfig } from '../../utils/config.js'
 import { confirmTip, fetchNextTip } from '../ads.js'
+import { renderSponsorLink } from './tipLink.js'
 import type { Tip, TipContext, TipSponsor } from './types.js'
 
 /**
@@ -52,12 +52,29 @@ export function resetEarningCadenceForTesting(): void {
   pickCounter = 0
 }
 
-function renderEarningTip(body: string, ctx: TipContext, earning: boolean): string {
+function renderEarningTip(
+  body: string,
+  ctx: TipContext,
+  earning: boolean,
+  ad?: { name?: string; link?: string },
+): string {
   const green = color('success', ctx.theme)
   const label = earning ? 'Sponsored +credits' : 'Sponsored'
-  const badge = green(`${label} · ${GITLAWB.name}`)
-  const url = GITLAWB.url ? ` ${chalk.dim(GITLAWB.url)}` : ''
-  return `${badge} — ${green(body)}${url}`
+  // Attribute to the real advertiser and point at the ad's click URL (the
+  // partner's tracker — that's what records the click and pays us). Fall back to
+  // Gitlawb only for the static no-ad line.
+  const sponsor = ad?.name?.trim() || GITLAWB.name
+  // Never point a third-party advertiser's name at the Gitlawb URL: for a real
+  // ad use only its own click URL (no link if it's missing), and reserve the
+  // Gitlawb fallback for the static no-ad line.
+  const adLink = ad?.link?.trim()
+  const linkUrl = earning ? adLink : adLink || GITLAWB.url
+  // Make the advertiser name a clickable hyperlink to its click URL instead of
+  // printing the (often very long) tracker URL inline. Clicks still hit the
+  // tracker, so attribution/payout are unchanged.
+  const { display, trailing } = renderSponsorLink(sponsor, linkUrl)
+  const badge = green(`${label} · ${display}`)
+  return `${badge} — ${green(body)}${trailing}`
 }
 
 /**
@@ -78,20 +95,24 @@ export function buildEarningTip(): Tip {
       const code = getGlobalConfig().ads?.earnCode
       if (!code) return renderEarningTip(fallback, ctx, false)
 
-      let tip
-      try {
-        tip = await fetchNextTip(code)
-      } catch {
-        tip = null
-      }
-      if (!tip) return renderEarningTip(fallback, ctx, false)
+      // Pass the viewer's latest prompt for contextual ad matching. Enabling
+      // sponsored tips disclosed this sharing; ads.ts sanitizes it first.
+      // fetchNextTip is contractually non-throwing (it catches everything and
+      // returns null), so no try/catch is needed at this call site.
+      const tip = await fetchNextTip(code, 'openclaude', ctx.latestUserMessage)
+      // A malformed/empty ad payload must not render a blank line and then
+      // credit a never-seen ad — degrade to the static fallback instead.
+      if (!tip || !tip.text.trim()) return renderEarningTip(fallback, ctx, false)
 
       const delay = Math.max(0, Math.min(tip.dwellMs, MAX_CONFIRM_DELAY_MS))
-      setTimeout(() => {
+      // unref'd so this best-effort confirm never keeps a short-lived CLI run
+      // alive for up to the dwell window.
+      const timer = setTimeout(() => {
         void confirmTip(code, tip.token).catch(() => {})
       }, delay)
+      ;(timer as { unref?: () => void }).unref?.()
 
-      return renderEarningTip(tip.text, ctx, true)
+      return renderEarningTip(tip.text, ctx, true, { name: tip.name, link: tip.link })
     },
   }
 }
