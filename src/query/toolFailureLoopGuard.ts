@@ -1,11 +1,25 @@
 import type { ToolUseBlock } from '@anthropic-ai/sdk/resources/index.mjs'
 
 import type { AttachmentMessage, UserMessage } from '../types/message.js'
+import { getMissingToolResultAbortMessage } from '../utils/abortReasons.js'
 
 import { getGlobalConfig } from '../utils/config.js'
 
 const DEFAULT_TOOL_FAILURE_LOOP_THRESHOLD = 3
 const MAX_FALLBACK_CATEGORY_LENGTH = 120
+// Parent-query aborts are synthetic cleanup results, not tool failures.
+// Deliberately exclude tool-timeout: that is the tool's own failure mode.
+const SYNTHETIC_ABORT_TOOL_RESULT_PREFIXES = [
+  getMissingToolResultAbortMessage('interrupt'),
+  getMissingToolResultAbortMessage('query-timeout'),
+  getMissingToolResultAbortMessage('hard-max-query-timeout'),
+  getMissingToolResultAbortMessage('background'),
+  getMissingToolResultAbortMessage('side-task-cancelled'),
+  getMissingToolResultAbortMessage('agent-summary-superseded'),
+  getMissingToolResultAbortMessage('memory-extraction-superseded'),
+  getMissingToolResultAbortMessage('parent-ended'),
+  getMissingToolResultAbortMessage('unknown-abort'),
+].map(message => message.toLowerCase())
 
 export type ToolFailureLoopGuardState = {
   persistentSignatureCounts: Map<string, number>
@@ -104,7 +118,10 @@ export function updateToolFailureLoopGuard(params: {
       continue
     }
 
-    if (isIgnoredSyntheticToolResult(content)) {
+    if (
+      block.isAgentStepLimitToolResult ||
+      isIgnoredSyntheticToolResult(content)
+    ) {
       continue
     }
 
@@ -218,6 +235,7 @@ type ToolResultBlockLike = {
   tool_use_id?: unknown
   content?: unknown
   is_error?: unknown
+  isAgentStepLimitToolResult?: boolean
 }
 
 type FailureInfo = {
@@ -280,7 +298,10 @@ function getToolResultBlocks(
 
     for (const block of message.message.content) {
       if (isToolResultBlock(block)) {
-        blocks.push(block)
+        blocks.push({
+          ...block,
+          isAgentStepLimitToolResult: message.isAgentStepLimitToolResult,
+        })
       }
     }
   }
@@ -306,9 +327,12 @@ function toolResultContentToString(content: unknown): string {
   }
 
   if (typeof content === 'object' && content !== null) {
-    const text = (content as { text?: unknown }).text
-    if (typeof text === 'string') {
-      return text
+    const block = content as { text?: unknown; content?: unknown }
+    if (block.text !== undefined) {
+      return toolResultContentToString(block.text)
+    }
+    if (block.content !== undefined) {
+      return toolResultContentToString(block.content)
     }
   }
 
@@ -333,6 +357,9 @@ function isIgnoredSyntheticToolResult(content: string): boolean {
     ) ||
     withoutErrorPrefix.startsWith(
       "the user doesn't want to take this action right now",
+    ) ||
+    SYNTHETIC_ABORT_TOOL_RESULT_PREFIXES.some(prefix =>
+      withoutErrorPrefix.startsWith(prefix),
     ) ||
     withoutErrorPrefix === 'streaming fallback - tool execution discarded' ||
     withoutErrorPrefix.startsWith('cancelled: parallel tool call') ||

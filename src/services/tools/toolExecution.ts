@@ -62,6 +62,10 @@ import type {
 } from '../../types/message.js'
 import { count } from '../../utils/array.js'
 import { createAttachmentMessage } from '../../utils/attachments.js'
+import {
+  getMissingToolResultAbortMessage,
+  shouldCreateUserInterruptionMessage,
+} from '../../utils/abortReasons.js'
 import { logForDebugging } from '../../utils/debug.js'
 import {
   AbortError,
@@ -90,6 +94,7 @@ import {
   startSessionActivity,
   stopSessionActivity,
 } from '../../utils/sessionActivity.js'
+import type { QueryActiveToolUse } from '../../utils/queryLifecycle.js'
 import { shouldSkipSessionPersistence } from '../../utils/sessionPersistencePolicy.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import { Stream } from '../../utils/stream.js'
@@ -131,6 +136,13 @@ export const HOOK_TIMING_DISPLAY_THRESHOLD_MS = 500
 /** Log a debug warning when hooks/permission-decision block for this long. Matches
  * BashTool's PROGRESS_THRESHOLD_MS — the collapsed view feels stuck past this. */
 const SLOW_PHASE_LOG_THRESHOLD_MS = 2000
+
+function getAlreadyAbortedToolResultMessage(reason: unknown): string {
+  if (reason === 'interrupt' || shouldCreateUserInterruptionMessage(reason)) {
+    return CANCEL_MESSAGE
+  }
+  return getMissingToolResultAbortMessage(reason)
+}
 
 export function getReplayModifiedFiles(
   toolName: string,
@@ -472,6 +484,9 @@ export async function* runToolUse(
   const toolInput = toolUse.input as { [key: string]: string }
   try {
     if (toolUseContext.abortController.signal.aborted) {
+      const abortMessage = getAlreadyAbortedToolResultMessage(
+        toolUseContext.abortController.signal.reason,
+      )
       logEvent('tengu_tool_use_cancelled', {
         toolName: sanitizeToolNameForAnalytics(tool.name),
         toolUseID:
@@ -500,11 +515,11 @@ export async function* runToolUse(
         ),
       })
       const content = createToolResultStopMessage(toolUse.id)
-      content.content = withMemoryCorrectionHint(CANCEL_MESSAGE)
+      content.content = withMemoryCorrectionHint(abortMessage)
       yield {
         message: createUserMessage({
           content: [content],
-          toolUseResult: CANCEL_MESSAGE,
+          toolUseResult: abortMessage,
           sourceToolAssistantUUID: assistantMessage.uuid,
         }),
       }
@@ -836,9 +851,12 @@ export async function checkPermissionsAndCallTool(
     return (input as BashToolInput).timeout
   }
 
-  function trackLifecycleToolUse(input: unknown): void {
+  let lifecycleStarted = false
+  let lifecycleEnded = false
+
+  function createLifecycleToolUse(input: unknown): QueryActiveToolUse {
     const lifecycleBashTimeoutMs = getLifecycleBashTimeoutMs(input)
-    toolUseContext.queryLifecycle?.startToolUse({
+    return {
       toolUseId: toolUseID,
       toolName: tool.name,
       startedAt: lifecycleStartTime,
@@ -846,11 +864,53 @@ export async function checkPermissionsAndCallTool(
       ...(lifecycleBashTimeoutMs !== undefined && {
         timeoutMs: lifecycleBashTimeoutMs,
       }),
-    })
+    }
+  }
+
+  function isLifecycleToolUseActive(): boolean {
+    return (
+      toolUseContext.queryLifecycle
+        ?.snapshot()
+        .toolUses.some(activeToolUse => activeToolUse.toolUseId === toolUseID) ??
+      false
+    )
+  }
+
+  function trackLifecycleToolUse(input: unknown): void {
+    const queryLifecycle = toolUseContext.queryLifecycle
+    if (!queryLifecycle) return
+    if (lifecycleEnded) return
+
+    const lifecycleToolUse = createLifecycleToolUse(input)
+    if (!lifecycleStarted) {
+      queryLifecycle.startToolUse(lifecycleToolUse)
+      lifecycleStarted = true
+      return
+    }
+
+    if (!isLifecycleToolUseActive()) {
+      lifecycleEnded = true
+      return
+    }
+
+    queryLifecycle.updateToolUse(lifecycleToolUse)
+  }
+
+  function endLifecycleToolUse(): void {
+    if (!lifecycleStarted || lifecycleEnded) return
+
+    const queryLifecycle = toolUseContext.queryLifecycle
+    if (!queryLifecycle) return
+
+    lifecycleEnded = true
+    if (isLifecycleToolUseActive()) {
+      queryLifecycle.endToolUse(toolUseID)
+    }
   }
 
   trackLifecycleToolUse(parsedInput.data)
 
+  try {
   // Validate input values. Each tool has its own validation logic
   const isValidCall = await tool.validateInput?.(
     parsedInput.data,
@@ -1880,5 +1940,8 @@ export async function checkPermissionsAndCallTool(
         toolUseContext.toolDecisions?.delete(toolUseID)
       }
     }
+  }
+  } finally {
+    endLifecycleToolUse()
   }
 }
