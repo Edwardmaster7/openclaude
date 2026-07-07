@@ -499,6 +499,10 @@ async function versionIsAvailable(version: string): Promise<boolean> {
 }
 
 export async function repairNativeLauncher(version: string): Promise<void> {
+  if (MACRO.PACKAGE_URL !== '@anthropic-ai/claude-code') {
+    logForDebugging('repairNativeLauncher: skipping for non-first-party package')
+    return
+  }
   const dirs = getBaseDirectories()
   const installPath = join(dirs.versions, version)
 
@@ -827,6 +831,10 @@ export async function checkInstall(
 ): Promise<SetupMessage[]> {
   // Skip all installation checks if disabled via environment variable
   if (isEnvTruthy(process.env.DISABLE_INSTALLATION_CHECKS)) {
+    return []
+  }
+
+  if (MACRO.PACKAGE_URL !== '@anthropic-ai/claude-code') {
     return []
   }
 
@@ -1710,18 +1718,8 @@ export async function cleanupNpmInstallations(): Promise<{
     errors.push(codePackageResult.error)
   }
 
-  // Also attempt to remove MACRO.PACKAGE_URL if it's defined and different
-  if (MACRO.PACKAGE_URL && MACRO.PACKAGE_URL !== '@anthropic-ai/claude-code') {
-    const macroPackageResult = await attemptNpmUninstall(MACRO.PACKAGE_URL)
-    if (macroPackageResult.success) {
-      removed++
-      if (macroPackageResult.warning) {
-        warnings.push(macroPackageResult.warning)
-      }
-    } else if (macroPackageResult.error) {
-      errors.push(macroPackageResult.error)
-    }
-  }
+  // Do NOT uninstall MACRO.PACKAGE_URL if it's OpenClaude (@gitlawb/openclaude),
+  // because we are running via npm package and do not have native binaries.
 
   // Preserve compatibility with pre-migration installs under ~/.claude/local.
   const localInstallDirs = Array.from(

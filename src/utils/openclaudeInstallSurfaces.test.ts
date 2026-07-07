@@ -276,12 +276,12 @@ test('cleanupNpmInstallations removes both openclaude and legacy claude local in
   expect(removedPaths).toContain(join(homedir(), '.claude', 'local'))
 })
 
-test('cleanupNpmInstallations manual fallback removes openclaude npm shim', async () => {
+test('cleanupNpmInstallations manual fallback removes claude npm shim', async () => {
   await mockEnvPlatform('darwin')
 
   const testHome = join(process.cwd(), 'work', 'openclaude-install-home-test')
   const npmPrefix = join(testHome, '.npm-global')
-  const shimPath = join(npmPrefix, 'bin', 'openclaude')
+  const shimPath = join(npmPrefix, 'bin', 'claude')
   ;(globalThis as Record<string, unknown>).MACRO = {
     PACKAGE_URL: '@gitlawb/openclaude',
   }

@@ -1,7 +1,9 @@
 import { execa } from 'execa'
+import { existsSync, readFileSync } from 'fs'
 import { readFile, realpath } from 'fs/promises'
 import { homedir } from 'os'
-import { delimiter, join, posix, win32 } from 'path'
+import { delimiter, dirname, join, posix, win32 } from 'path'
+import { fileURLToPath } from 'url'
 import { checkGlobalInstallPermissions } from './autoUpdater.js'
 import { isInBundledMode } from './bundledMode.js'
 import {
@@ -98,6 +100,43 @@ function getNormalizedPaths(): [invokedPath: string, execPath: string] {
   return [invokedPath, execPath]
 }
 
+// ponytail: heurística robusta e síncrona para detectar se estamos rodando a partir da árvore de origem de desenvolvimento
+function isRunningFromSourceTree(): boolean {
+  try {
+    const currentFilePath = fileURLToPath(import.meta.url)
+    if (currentFilePath.includes('node_modules')) {
+      return false
+    }
+    let currentDir = dirname(currentFilePath)
+    while (true) {
+      const packageJsonPath = join(currentDir, 'package.json')
+      if (existsSync(packageJsonPath)) {
+        try {
+          const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as {
+            name?: string
+          }
+          if (
+            pkg.name === '@gitlawb/openclaude' ||
+            pkg.name === '@anthropic-ai/claude-code'
+          ) {
+            return true
+          }
+        } catch {
+          // Ignore and keep walking up
+        }
+      }
+      const parentDir = dirname(currentDir)
+      if (parentDir === currentDir) {
+        break
+      }
+      currentDir = parentDir
+    }
+  } catch {
+    // Fail silently
+  }
+  return false
+}
+
 export async function getCurrentInstallationType(): Promise<InstallationType> {
   const [invokedPath] = getNormalizedPaths()
 
@@ -159,7 +198,7 @@ export async function getCurrentInstallationType(): Promise<InstallationType> {
   // a user shell exporting NODE_ENV=development can't downgrade a real npm
   // install to 'development' (which would block /update). A source-tree run
   // matches none of the path markers above, so it lands here.
-  if (process.env.NODE_ENV === 'development') {
+  if (process.env.NODE_ENV === 'development' || isRunningFromSourceTree()) {
     return 'development'
   }
 
@@ -168,7 +207,7 @@ export async function getCurrentInstallationType(): Promise<InstallationType> {
 }
 
 async function getInstallationPath(): Promise<string> {
-  if (process.env.NODE_ENV === 'development') {
+  if (process.env.NODE_ENV === 'development' || isRunningFromSourceTree()) {
     return getCwd()
   }
 

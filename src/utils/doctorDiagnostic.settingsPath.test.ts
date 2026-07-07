@@ -7,7 +7,7 @@ import {
   acquireSharedMutationLock,
   releaseSharedMutationLock,
 } from '../test/sharedMutationLock.js'
-import { detectStaleProjectSettingsPaths } from './doctorDiagnostic.js'
+import { detectStaleProjectSettingsPaths, getCurrentInstallationType } from './doctorDiagnostic.js'
 
 let tempDir: string | null = null
 let originalCwd: string | null = null
@@ -111,5 +111,12 @@ describe('detectStaleProjectSettingsPaths', () => {
 
     expect(warning?.issue).toContain('.claude/settings.json')
     expect(warning?.issue).toContain('.openclaude/settings.json')
+  })
+})
+
+describe('getCurrentInstallationType', () => {
+  test('returns development when running from openclaude source tree', async () => {
+    const type = await getCurrentInstallationType()
+    expect(type).toBe('development')
   })
 })
