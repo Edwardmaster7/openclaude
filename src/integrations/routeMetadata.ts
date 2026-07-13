@@ -218,7 +218,11 @@ function hasUsableEnvCredentialValue(
     return false
   }
 
-  if (envVar === 'OPENAI_API_KEYS' || envVar === 'OPENAI_API_KEY') {
+  if (
+    envVar === 'OPENAI_API_KEYS' ||
+    envVar === 'OPENAI_API_KEY' ||
+    envVar === 'AIMLAPI_API_KEY'
+  ) {
     return hasUsableOpenAICredential(value)
   }
   return value.trim() !== ''
@@ -374,6 +378,60 @@ export function isClinePassBaseUrl(value: string | undefined): boolean {
   }
 }
 
+/**
+ * Checks whether the given URL value targets the Cloudflare Workers AI
+ * OpenAI-compatible API, i.e. `api.cloudflare.com` **and** the Workers AI path
+ * `/client/v4/accounts/<account_id>/ai/v1`.
+ *
+ * The host alone is not sufficient: `api.cloudflare.com` also serves the general
+ * Cloudflare REST API (e.g. `/client/v4/user/tokens/verify`), which is not a
+ * Workers AI endpoint. Route detection and CLOUDFLARE_API_TOKEN mirroring both
+ * key on this predicate, so matching the whole host would route unrelated
+ * Cloudflare API calls through the `cloudflare` provider and leak the token into
+ * `OPENAI_API_KEY` for them.
+ *
+ * The account id must be a real value — the descriptor's literal `<ACCOUNT_ID>`
+ * placeholder (or any `<…>` placeholder) does not count, since a URL still
+ * carrying it cannot serve a request. The shared AI Gateway host
+ * (`gateway.ai.cloudflare.com`) is also excluded — it proxies arbitrary upstream
+ * providers, so a profile pointed there is not necessarily Cloudflare-credentialed.
+ */
+export function isCloudflareBaseUrl(value: string | undefined): boolean {
+  const trimmed = value?.trim()
+  if (!trimmed) {
+    return false
+  }
+
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    return false
+  }
+  // Workers AI is only served over HTTPS. Requiring `https:` here keeps the
+  // Cloudflare route — and the CLOUDFLARE_API_TOKEN it mirrors into
+  // OPENAI_API_KEY — off a plaintext `http://api.cloudflare.com/...` endpoint.
+  if (url.protocol !== 'https:') {
+    return false
+  }
+  if (url.hostname.toLowerCase() !== 'api.cloudflare.com') {
+    return false
+  }
+  const match = url.pathname.match(
+    /^\/client\/v4\/accounts\/([^/]+)\/ai\/v1(?:\/|$)/,
+  )
+  if (!match) {
+    return false
+  }
+  let accountId: string
+  try {
+    accountId = decodeURIComponent(match[1] ?? '')
+  } catch {
+    accountId = match[1] ?? ''
+  }
+  return accountId.length > 0 && !/[<>]/.test(accountId)
+}
+
 export function getClinePassBaseUrlOverride(
   processEnv: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
@@ -492,6 +550,10 @@ function hasConflictingOpenAIBaseUrlForRoute(
   )
 }
 
+function isAimlapiBaseUrl(baseUrl?: string): boolean {
+  return normalizeHost(baseUrl) === 'api.aimlapi.com'
+}
+
 function hasNoExplicitNonOpenAICompatibleProvider(
   processEnv: NodeJS.ProcessEnv,
 ): boolean {
@@ -503,6 +565,29 @@ function hasNoExplicitNonOpenAICompatibleProvider(
     !isEnvTruthy(processEnv.CLAUDE_CODE_USE_BEDROCK) &&
     !isEnvTruthy(processEnv.CLAUDE_CODE_USE_VERTEX) &&
     !isEnvTruthy(processEnv.CLAUDE_CODE_USE_FOUNDRY)
+  )
+}
+
+function hasNoExplicitNonOpenAIProvider(
+  processEnv: NodeJS.ProcessEnv,
+): boolean {
+  return (
+    !isEnvTruthy(processEnv.CLAUDE_CODE_USE_GITHUB) &&
+    !isEnvTruthy(processEnv.CLAUDE_CODE_USE_GEMINI) &&
+    !isEnvTruthy(processEnv.CLAUDE_CODE_USE_MISTRAL) &&
+    !isEnvTruthy(processEnv.CLAUDE_CODE_USE_BEDROCK) &&
+    !isEnvTruthy(processEnv.CLAUDE_CODE_USE_VERTEX) &&
+    !isEnvTruthy(processEnv.CLAUDE_CODE_USE_FOUNDRY)
+  )
+}
+
+export function hasAimlapiEnvOnlyProviderIntent(
+  processEnv: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    hasUsableOpenAICredential(processEnv.AIMLAPI_API_KEY) &&
+    !hasConflictingOpenAIBaseUrlForRoute(processEnv, isAimlapiBaseUrl) &&
+    hasNoExplicitNonOpenAIProvider(processEnv)
   )
 }
 
@@ -620,12 +705,25 @@ export function hasClinePassEnvOnlyProviderIntent(
 
 export function resolveEnvOnlyProviderRouteId(
   processEnv: NodeJS.ProcessEnv = process.env,
-): 'xai' | 'minimax' | 'venice' | 'xiaomi-mimo' | 'nearai' | 'fireworks' | 'clinepass' | null {
+):
+  | 'xai'
+  | 'minimax'
+  | 'aimlapi'
+  | 'venice'
+  | 'xiaomi-mimo'
+  | 'nearai'
+  | 'fireworks'
+  | 'clinepass'
+  | null {
   if (
     hasMiniMaxRouteIntent(processEnv) &&
     hasMiniMaxEnvOnlyProviderIntent(processEnv)
   ) {
     return 'minimax'
+  }
+
+  if (hasAimlapiEnvOnlyProviderIntent(processEnv)) {
+    return 'aimlapi'
   }
 
   if (hasXaiEnvOnlyProviderIntent(processEnv)) {
@@ -831,6 +929,13 @@ export function resolveRouteIdFromBaseUrl(
   if (normalizedHost) {
     for (const route of routes) {
       if (matchHostnameAgainstRouteHosts(normalizedHost, getValidationRoutingHosts(route))) {
+        // api.cloudflare.com also serves the general Cloudflare REST API, so a
+        // bare hostname match isn't enough for the Workers AI route — require
+        // the Workers AI path (/client/v4/accounts/<id>/ai/v1). Otherwise an
+        // unrelated Cloudflare API URL would inherit Workers-AI routing.
+        if (route.id === 'cloudflare' && !isCloudflareBaseUrl(baseUrl)) {
+          continue
+        }
         return route.id
       }
     }
@@ -842,6 +947,26 @@ export function resolveRouteIdFromBaseUrl(
   }
 
   return null
+}
+
+/**
+ * Extra boundary for resolving a route from the *active profile provider* (not
+ * from a matched base URL). Most routes are host-scoped by resolveProfileRoute,
+ * but the Cloudflare Workers AI route is path-scoped (see isCloudflareBaseUrl):
+ * a saved `cloudflare` profile retargeted to a non-Workers URL — the shared AI
+ * Gateway host, or a general api.cloudflare.com REST path — must NOT resolve as
+ * `cloudflare`, or its Workers-AI shim config and CLOUDFLARE_API_TOKEN mirroring
+ * would be applied to a generic endpoint. Returns true (route allowed) for every
+ * other route.
+ */
+function profileRouteHonorsBaseUrlBoundary(
+  routeId: string,
+  baseUrl: string | undefined,
+): boolean {
+  if (routeId === 'cloudflare') {
+    return isCloudflareBaseUrl(baseUrl)
+  }
+  return true
 }
 
 export function resolveActiveRouteIdFromEnv(
@@ -884,7 +1009,11 @@ export function resolveActiveRouteIdFromEnv(
       if (
         route.routeId !== 'unknown-fallback' &&
         route.routeId !== 'openai' &&
-        route.routeId !== 'custom'
+        route.routeId !== 'custom' &&
+        profileRouteHonorsBaseUrlBoundary(
+          route.routeId,
+          options.activeProfileBaseUrl ?? baseUrl,
+        )
       ) {
         return route.routeId
       }
@@ -915,7 +1044,11 @@ export function resolveActiveRouteIdFromEnv(
     if (
       route.routeId !== 'unknown-fallback' &&
       route.routeId !== 'openai' &&
-      route.routeId !== 'custom'
+      route.routeId !== 'custom' &&
+      profileRouteHonorsBaseUrlBoundary(
+        route.routeId,
+        options.activeProfileBaseUrl,
+      )
     ) {
       return route.routeId
     }

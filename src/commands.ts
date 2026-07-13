@@ -28,6 +28,7 @@ import doctor from './commands/doctor/index.js'
 import onboardGithub from './commands/onboard-github/index.js'
 import knowledge from './commands/knowledge/index.js'
 import memory from './commands/memory/index.js'
+import repomap from './commands/repomap/index.js'
 import help from './commands/help/index.js'
 import ide from './commands/ide/index.js'
 import init from './commands/init.js'
@@ -167,6 +168,7 @@ import sandboxToggle from './commands/sandbox-toggle/index.js'
 import chrome from './commands/chrome/index.js'
 import stickers from './commands/stickers/index.js'
 import advisor from './commands/advisor.js'
+import smartroute from './commands/smartroute/index.js'
 import { logError } from './utils/log.js'
 import { toError } from './utils/errors.js'
 import { logForDebugging } from './utils/debug.js'
@@ -278,6 +280,7 @@ const COMMANDS = memoize((): Command[] => [
   addDir,
   ads,
   advisor,
+  smartroute,
   agents,
   autoFix,
   branch,
@@ -331,6 +334,7 @@ const COMMANDS = memoize((): Command[] => [
   releaseNotes,
   reloadPlugins,
   rename,
+  repomap,
   replay,
   requestSize,
   requestSizeNonInteractive,

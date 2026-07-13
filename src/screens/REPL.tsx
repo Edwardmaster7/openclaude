@@ -2626,7 +2626,8 @@ export function REPL({
       registerActivity: (reason: string) => {
         queryGuard.registerActivity(reason, queryGeneration);
       },
-      acquireLease: (input) => queryGuard.acquireLease(input, queryGeneration)
+      acquireLease: (input) => queryGuard.acquireLease(input, queryGeneration),
+      beginUserInteraction: () => queryGuard.beginUserInteraction(queryGeneration)
     } satisfies ProcessUserInputContext['queryActivity'];
     return {
       abortController,
