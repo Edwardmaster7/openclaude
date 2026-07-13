@@ -18,6 +18,7 @@ import type { ProviderPreset } from '../utils/providerProfiles.js'
 const EXPECTED_PRESETS = [
   'anthropic',
   'atlas-cloud',
+  'aimlapi',
   'openai',
   'ollama',
   'kimi-code',
@@ -43,6 +44,7 @@ const EXPECTED_PRESETS = [
   'zai',
   'bankr',
   'atomic-chat',
+  'cloudflare',
   'gitlawb-opengateway',
   'nearai',
   'fireworks',

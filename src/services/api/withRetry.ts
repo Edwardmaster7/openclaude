@@ -49,7 +49,7 @@ import {
   checkMockRateLimitError,
   isMockRateLimitError,
 } from '../rateLimitMocking.js'
-import { REPEATED_529_ERROR_MESSAGE } from './errors.js'
+import { REPEATED_529_ERROR_MESSAGE, isOpenCodeGoQuotaError } from './errors.js'
 import { extractConnectionErrorDetails } from './errorUtils.js'
 import {
   extractOpenAICategoryMarker,
@@ -124,9 +124,24 @@ function isPersistentRetryEnabled(): boolean {
 function isQuotaExhausted(error: any): boolean {
   const msg = (error?.message || '').toLowerCase()
 
+  // OpenRouter (and other gateways) return 402 with instructions to adjust max_tokens.
+  // If the 402 is retryable via token adjustment, do not treat it as exhausted.
+  if (error?.status === 402 && error instanceof APIError && parseOpenRouterAffordableMaxTokensError(error) !== undefined) {
+    return false
+  }
+
   return (
-    error?.status === 429 &&
-    (msg.includes('limit: 0') || msg.includes('exceeded your current quota'))
+    error?.status === 402 ||
+    msg.includes('quota_exhausted') ||
+    ((error?.status === 429 || error?.status === 403 || error?.status === 400) &&
+      (msg.includes('limit: 0') ||
+        msg.includes('exceeded your current quota') ||
+        msg.includes('credit') ||
+        msg.includes('billing') ||
+        msg.includes('payment required') ||
+        msg.includes('usage limit') ||
+        msg.includes('allotment') ||
+        msg.includes('quota')))
   )
 }
 
@@ -295,16 +310,31 @@ export async function* withRetry<T>(
         `API error (attempt ${attempt}/${maxRetries + 1}): ${error instanceof APIError ? `${error.status} ${error.message}` : errorMessage(error)}`,
         { level: 'error' },
       )
-        if (isQuotaExhausted(error)) {
-          throw new CannotRetryError(
-            new Error(
-              'API quota exhausted or not enabled.\n' +
-              'Fix:\n' +
-              '- Enable billing for your provider\n' +
-              '- Or switch provider via /provider',
-            ),
-            retryContext,
-          );
+      // OpenCode Go quota exhaustion is terminal and carries a specific,
+      // actionable assistant message (subscribe / reset timing). Throw here -
+      // before the fast-mode 429 fallback below - so fast mode can't retry or
+      // cooldown a quota-exhausted subscription. Wrapping the original
+      // APIError preserves the OpenCode Go message via
+      // getAssistantMessageFromError instead of the generic guidance.
+      if (isOpenCodeGoQuotaError(error)) {
+        throw new CannotRetryError(error, retryContext)
+      }
+      if (
+        error instanceof APIError &&
+        extractOpenAICategoryMarker(error.message) === 'quota_exhausted'
+      ) {
+        throw new CannotRetryError(error, retryContext)
+      }
+      if (isQuotaExhausted(error)) {
+        throw new CannotRetryError(
+          new Error(
+            'API quota exhausted or not enabled.\n' +
+            'Fix:\n' +
+            '- Enable billing for your provider\n' +
+            '- Or switch provider via /provider',
+          ),
+          retryContext,
+        )
       }
       // Fast mode fallback: on 429/529, either wait and retry (short delays)
       // or fall back to standard speed (long delays) to avoid cache thrashing.
@@ -826,6 +856,13 @@ function shouldRetry(error: APIError, persistentRetryEnabled: boolean): boolean 
     return false
   }
 
+  // OpenCode Go subscription quota exhaustion is terminal — retrying burns
+  // the same 429 and confuses the user with repeated "mysterious stop"
+  // failures. getAssistantMessageFromError surfaces the actionable message.
+  if (isOpenCodeGoQuotaError(error)) {
+    return false
+  }
+
   // Persistent mode: 429/529 always retryable, bypass subscriber gates and
   // x-should-retry header.
   if (persistentRetryEnabled && isTransientCapacityError(error)) {
@@ -1047,3 +1084,5 @@ export function getRateLimitResetDelayMs(error: APIError): number | null {
   // bedrock, vertex, foundry, gemini — no standard reset header
   return null
 }
+
+export { shouldRetry }

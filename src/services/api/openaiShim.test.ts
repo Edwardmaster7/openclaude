@@ -5,6 +5,10 @@ import { asMockFetch } from '../../test/typedMocks.js'
 import { _clearRegistryForTesting, ensureIntegrationsLoaded, registerGateway } from '../../integrations/index.ts'
 import { applyProviderFlag } from '../../utils/providerFlag.ts'
 import { applyProviderProfileToProcessEnv } from '../../utils/providerProfiles.ts'
+import {
+  getAssistantMessageFromError,
+  OPENCODE_GO_FREE_LIMIT_ERROR_MESSAGE,
+} from './errors.ts'
 import { createOpenAIShimClient, hasMistralApiHost } from './openaiShim.ts'
 import * as realCodexShim from './codexShim.js'
 import * as realGithubModelsCredentials from '../../utils/githubModelsCredentials.js'
@@ -7989,6 +7993,81 @@ test('DeepSeek sends thinking toggle and normalized reasoning effort', async () 
   expect(requestBody?.store).toBeUndefined()
 })
 
+test('NVIDIA NIM DeepSeek sends chat template thinking kwargs', async () => {
+  process.env.OPENAI_BASE_URL = 'https://integrate.api.nvidia.com/v1'
+  process.env.NVIDIA_API_KEY = 'nvapi-test'
+
+  let requestBody: Record<string, unknown> | undefined
+  globalThis.fetch = (async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body))
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-1',
+        model: 'deepseek-ai/deepseek-v4-pro',
+        choices: [
+          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+        ],
+        usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+  }) as unknown as FetchType
+
+  const client = createOpenAIShimClient({
+    reasoningEffort: 'xhigh',
+  }) as OpenAIShimClient
+  await client.beta.messages.create({
+    model: 'deepseek-ai/deepseek-v4-pro',
+    system: 'test',
+    messages: [{ role: 'user', content: 'hi' }],
+    max_tokens: 64,
+    stream: false,
+    thinking: { type: 'enabled' },
+  })
+
+  expect(requestBody?.thinking).toEqual({ type: 'enabled' })
+  expect(requestBody?.reasoning_effort).toBe('max')
+  expect(requestBody?.chat_template_kwargs).toEqual({
+    thinking: true,
+    enable_thinking: true,
+  })
+})
+
+test('NVIDIA NIM DeepSeek omits chat template thinking kwargs when thinking is disabled', async () => {
+  process.env.OPENAI_BASE_URL = 'https://integrate.api.nvidia.com/v1'
+  process.env.NVIDIA_API_KEY = 'nvapi-test'
+
+  let requestBody: Record<string, unknown> | undefined
+  globalThis.fetch = (async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body))
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-1',
+        model: 'deepseek-ai/deepseek-v4-pro',
+        choices: [
+          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+        ],
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+  }) as unknown as FetchType
+
+  const client = createOpenAIShimClient({
+    reasoningEffort: 'xhigh',
+  }) as OpenAIShimClient
+  await client.beta.messages.create({
+    model: 'deepseek-ai/deepseek-v4-pro?thinking=disabled',
+    system: 'test',
+    messages: [{ role: 'user', content: 'hi' }],
+    max_tokens: 64,
+    stream: false,
+  })
+
+  expect(requestBody?.thinking).toBeUndefined()
+  expect(requestBody?.reasoning_effort).toBeUndefined()
+  expect(requestBody?.chat_template_kwargs).toBeUndefined()
+})
+
 test('DeepSeek omits thinking controls when the Anthropic-side request does not set them', async () => {
   process.env.OPENAI_BASE_URL = 'https://api.deepseek.com/v1'
   process.env.OPENAI_API_KEY = 'sk-deepseek'
@@ -8425,17 +8504,22 @@ test.each([
   ['glm-5.2?reasoning=medium', 'high'],
   ['glm-5.2?reasoning=high', 'high'],
   ['glm-5.2?reasoning=xhigh', 'max'],
+  ['openrouter/zhipu/glm-5.2?reasoning=low', 'high'],
+  ['openrouter/zhipu/glm-5.2?reasoning=medium', 'high'],
+  ['openrouter/zhipu/glm-5.2?reasoning=high', 'high'],
+  ['openrouter/zhipu/glm-5.2?reasoning=xhigh', 'max'],
 ] as const)('Z.AI GLM-5.2: %s enables mapped reasoning effort', async (model, effort) => {
   process.env.OPENAI_BASE_URL = 'https://api.z.ai/api/coding/paas/v4'
   process.env.OPENAI_API_KEY = 'sk-zai-test'
 
+  const expectedModel = model.split('?')[0];
   let requestBody: Record<string, unknown> | undefined
   globalThis.fetch = (async (_input, init) => {
     requestBody = JSON.parse(String(init?.body))
     return new Response(
       JSON.stringify({
         id: 'chatcmpl-1',
-        model: 'glm-5.2',
+        model: expectedModel,
         choices: [
           { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
         ],
@@ -8452,7 +8536,7 @@ test.each([
     stream: false,
   })
 
-  expect(requestBody?.model).toBe('glm-5.2')
+  expect(requestBody?.model).toBe(expectedModel)
   expect(requestBody?.thinking).toEqual({ type: 'enabled' })
   expect(requestBody?.reasoning_effort).toBe(effort)
 })
@@ -8554,6 +8638,109 @@ test('Z.AI GLM-5.2: per-turn thinking overrides model-query default', async () =
 
   expect(requestBody?.thinking).toEqual({ type: 'enabled' })
   expect(requestBody?.reasoning_effort).toBe('high')
+})
+
+test('NVIDIA NIM Z.AI GLM sends chat template thinking kwargs', async () => {
+  process.env.OPENAI_BASE_URL = 'https://integrate.api.nvidia.com/v1'
+  process.env.NVIDIA_API_KEY = 'nvapi-test'
+
+  let requestBody: Record<string, unknown> | undefined
+  globalThis.fetch = (async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body))
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-1',
+        model: 'z-ai/glm-5.2',
+        choices: [
+          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+        ],
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+  }) as unknown as FetchType
+
+  const client = createOpenAIShimClient({
+    reasoningEffort: 'xhigh',
+  }) as OpenAIShimClient
+  await client.beta.messages.create({
+    model: 'z-ai/glm-5.2',
+    messages: [{ role: 'user', content: 'hi' }],
+    max_tokens: 64,
+    stream: false,
+  })
+
+  expect(requestBody?.thinking).toEqual({ type: 'enabled' })
+  expect(requestBody?.reasoning_effort).toBe('max')
+  expect(requestBody?.chat_template_kwargs).toEqual({
+    thinking: true,
+    enable_thinking: true,
+  })
+})
+
+test('NVIDIA NIM Z.AI GLM omits chat template thinking kwargs without a reasoning request', async () => {
+  process.env.OPENAI_BASE_URL = 'https://integrate.api.nvidia.com/v1'
+  process.env.NVIDIA_API_KEY = 'nvapi-test'
+
+  let requestBody: Record<string, unknown> | undefined
+  globalThis.fetch = (async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body))
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-1',
+        model: 'z-ai/glm-5.2',
+        choices: [
+          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+        ],
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+  }) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  await client.beta.messages.create({
+    model: 'z-ai/glm-5.2',
+    messages: [{ role: 'user', content: 'hi' }],
+    max_tokens: 64,
+    stream: false,
+  })
+
+  expect(requestBody?.thinking).toBeUndefined()
+  expect(requestBody?.reasoning_effort).toBeUndefined()
+  expect(requestBody?.chat_template_kwargs).toBeUndefined()
+})
+
+test('NVIDIA NIM Z.AI GLM omits chat template thinking kwargs when thinking is disabled', async () => {
+  process.env.OPENAI_BASE_URL = 'https://integrate.api.nvidia.com/v1'
+  process.env.NVIDIA_API_KEY = 'nvapi-test'
+
+  let requestBody: Record<string, unknown> | undefined
+  globalThis.fetch = (async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body))
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-1',
+        model: 'z-ai/glm-5.2',
+        choices: [
+          { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+        ],
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+  }) as unknown as FetchType
+
+  const client = createOpenAIShimClient({
+    reasoningEffort: 'xhigh',
+  }) as OpenAIShimClient
+  await client.beta.messages.create({
+    model: 'z-ai/glm-5.2?thinking=disabled',
+    messages: [{ role: 'user', content: 'hi' }],
+    max_tokens: 64,
+    stream: false,
+  })
+
+  expect(requestBody?.thinking).toEqual({ type: 'disabled' })
+  expect(requestBody?.reasoning_effort).toBeUndefined()
+  expect(requestBody?.chat_template_kwargs).toBeUndefined()
 })
 
 test('Z.AI GLM-5.2: streaming requests with tools send tool_stream', async () => {
@@ -9771,4 +9958,386 @@ test('GitHub Copilot 401 chat_completions with providerOverride does not trigger
   } finally {
     mock.module('../../utils/githubModelsCredentials.js', () => realGithubModule)
   }
+})
+
+// --- JSON fallback regression tests (#1749) -------------------------------
+// Some OpenAI-compatible providers ignore `stream: true` and return a full
+// `application/json` chat completion. The fallback inside
+// openaiStreamToAnthropic must route that response through the same
+// non-streaming converter so tool_calls, Anthropic stop reasons, array
+// content, and <think> stripping are all preserved (jatmn CHANGES_REQUESTED).
+
+function makeJsonChatCompletion(body: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(body), {
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+async function collectFallbackEvents(
+  body: Record<string, unknown>,
+  model = 'fake-model',
+): Promise<Array<Record<string, unknown>>> {
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = (async () => makeJsonChatCompletion(body)) as unknown as FetchType
+  try {
+    const client = createOpenAIShimClient({}) as OpenAIShimClient
+    const result = await client.beta.messages
+      .create({
+        model,
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 64,
+        stream: true,
+      })
+      .withResponse()
+    const events: Array<Record<string, unknown>> = []
+    for await (const event of result.data) {
+      events.push(event)
+    }
+    return events
+  } finally {
+    // Restore so the global fetch stub does not leak past this helper.
+    globalThis.fetch = previousFetch
+  }
+}
+
+test('JSON fallback: preserves tool_calls as a tool_use block', async () => {
+  const events = await collectFallbackEvents({
+    id: 'chatcmpl-json-tool',
+    model: 'fake-model',
+    choices: [
+      {
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'Bash', arguments: '{"command":"pwd"}' },
+            },
+          ],
+        },
+        finish_reason: 'tool_calls',
+      },
+    ],
+  })
+
+  const toolStart = events.find(
+    event =>
+      event.type === 'content_block_start' &&
+      typeof event.content_block === 'object' &&
+      event.content_block !== null &&
+      (event.content_block as Record<string, unknown>).type === 'tool_use',
+  ) as { content_block?: Record<string, unknown> } | undefined
+  expect(toolStart?.content_block).toMatchObject({
+    type: 'tool_use',
+    id: 'call_1',
+    name: 'Bash',
+  })
+
+  const inputDelta = events.find(
+    event =>
+      event.type === 'content_block_delta' &&
+      typeof event.delta === 'object' &&
+      event.delta !== null &&
+      (event.delta as Record<string, unknown>).type === 'input_json_delta',
+  ) as { delta?: { partial_json?: string } } | undefined
+  expect(JSON.parse(inputDelta?.delta?.partial_json ?? '{}')).toEqual({
+    command: 'pwd',
+  })
+
+  const stopEvent = events.find(e => e.type === 'message_delta') as
+    | { delta?: { stop_reason?: string } }
+    | undefined
+  expect(stopEvent?.delta?.stop_reason).toBe('tool_use')
+})
+
+test('JSON fallback: maps finish_reason=length to max_tokens', async () => {
+  const events = await collectFallbackEvents({
+    id: 'chatcmpl-json-len',
+    model: 'fake-model',
+    choices: [
+      { message: { role: 'assistant', content: 'partial' }, finish_reason: 'length' },
+    ],
+  })
+  const stopEvent = events.find(e => e.type === 'message_delta') as
+    | { delta?: { stop_reason?: string } }
+    | undefined
+  expect(stopEvent?.delta?.stop_reason).toBe('max_tokens')
+})
+
+test('JSON fallback: preserves OpenCode Go quota error guidance', async () => {
+  process.env.OPENAI_BASE_URL = 'https://opencode.ai/zen/go/v1'
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    withResponseUrl(
+      makeJsonChatCompletion({
+        error: {
+          type: 'FreeUsageLimitError',
+          message: 'free usage limit reached',
+        },
+      }),
+      'https://opencode.ai/zen/go/v1/chat/completions',
+    )) as unknown as FetchType
+
+  try {
+    const client = createOpenAIShimClient({}) as OpenAIShimClient
+    const result = await client.beta.messages
+      .create({
+        model: 'fake-model',
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 64,
+        stream: true,
+      })
+      .withResponse()
+
+    let caught: unknown
+    try {
+      for await (const _event of result.data) {
+        // Consume until the JSON error is surfaced.
+      }
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(APIError)
+    const apiError = caught as APIError
+    expect(apiError.headers?.get('x-opencode-request-url')).toBe(
+      'https://opencode.ai/zen/go/v1/chat/completions',
+    )
+    const message = getAssistantMessageFromError(apiError, 'glm-5.1')
+    const first = message.message.content[0]
+    expect(typeof first === 'object' && first && 'text' in first ? first.text : '').toBe(
+      OPENCODE_GO_FREE_LIMIT_ERROR_MESSAGE,
+    )
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+})
+
+test('JSON fallback: strips <think> tags from emitted text', async () => {
+  const events = await collectFallbackEvents({
+    id: 'chatcmpl-json-think',
+    model: 'fake-model',
+    choices: [
+      {
+        message: { role: 'assistant', content: '<think>private plan</think>visible answer' },
+        finish_reason: 'stop',
+      },
+    ],
+  })
+  const textDelta = events.find(
+    event =>
+      event.type === 'content_block_delta' &&
+      typeof event.delta === 'object' &&
+      event.delta !== null &&
+      (event.delta as Record<string, unknown>).type === 'text_delta',
+  ) as { delta?: { text?: string } } | undefined
+  expect(textDelta?.delta?.text).toBe('visible answer')
+  expect(textDelta?.delta?.text).not.toContain('private plan')
+})
+
+test('JSON fallback: normalizes array content into a text string', async () => {
+  const events = await collectFallbackEvents({
+    id: 'chatcmpl-json-array',
+    model: 'fake-model',
+    choices: [
+      {
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'line one' },
+            { type: 'text', text: 'line two' },
+          ],
+        },
+        finish_reason: 'stop',
+      },
+    ],
+  })
+  const textDelta = events.find(
+    event =>
+      event.type === 'content_block_delta' &&
+      typeof event.delta === 'object' &&
+      event.delta !== null &&
+      (event.delta as Record<string, unknown>).type === 'text_delta',
+  ) as { delta?: { text?: unknown } } | undefined
+  expect(typeof textDelta?.delta?.text).toBe('string')
+  expect(textDelta?.delta?.text).toBe('line one\nline two')
+})
+
+test('JSON fallback: recovers raw-text tool call into tool_use block', async () => {
+  const events = await collectFallbackEvents({
+    id: 'chatcmpl-json-raw',
+    model: 'fake-model',
+    choices: [
+      {
+        message: {
+          role: 'assistant',
+          // Same "Tool calls requested:" recovery format the non-streaming
+          // converter already handles (parseRawToolCallsRequestedText).
+          content:
+            'Tool calls requested:\n- Bash({"command":"ls"}) [id: call_raw_1]',
+        },
+        finish_reason: 'stop',
+      },
+    ],
+  })
+  const toolStart = events.find(
+    event =>
+      event.type === 'content_block_start' &&
+      typeof event.content_block === 'object' &&
+      event.content_block !== null &&
+      (event.content_block as Record<string, unknown>).type === 'tool_use',
+  ) as { content_block?: Record<string, unknown> } | undefined
+  expect(toolStart?.content_block).toMatchObject({
+    type: 'tool_use',
+    id: 'call_raw_1',
+    name: 'Bash',
+  })
+  const stopEvent = events.find(e => e.type === 'message_delta') as
+    | { delta?: { stop_reason?: string } }
+    | undefined
+  expect(stopEvent?.delta?.stop_reason).toBe('tool_use')
+
+})
+
+test('JSON fallback: recovers Tencent HY3 text tool calls into tool_use blocks', async () => {
+  const events = await collectFallbackEvents({
+    id: 'chatcmpl-json-hy3',
+    model: 'tencent/hy3',
+    choices: [
+      {
+        message: {
+          role: 'assistant',
+          content:
+            '<tool_call:call_hy3>TaskCreate\n subject: Verify HY3\n description: Run the live test\n</tool_call:call_hy3>',
+        },
+        finish_reason: 'stop',
+      },
+    ],
+  }, 'tencent/hy3')
+  const toolStart = events.find(
+    event =>
+      event.type === 'content_block_start' &&
+      typeof event.content_block === 'object' &&
+      event.content_block !== null &&
+      (event.content_block as Record<string, unknown>).type === 'tool_use',
+  ) as { content_block?: Record<string, unknown> } | undefined
+  expect(toolStart?.content_block).toMatchObject({
+    type: 'tool_use',
+    name: 'TaskCreate',
+  })
+  const jsonDelta = events.find(
+    event =>
+      event.type === 'content_block_delta' &&
+      typeof event.delta === 'object' &&
+      event.delta !== null &&
+      (event.delta as Record<string, unknown>).type === 'input_json_delta',
+  ) as { delta?: { partial_json?: string } } | undefined
+  expect(JSON.parse(jsonDelta?.delta?.partial_json ?? '')).toEqual({
+    subject: 'Verify HY3',
+    description: 'Run the live test',
+  })
+  const stopEvent = events.find(e => e.type === 'message_delta') as
+    | { delta?: { stop_reason?: string } }
+    | undefined
+  expect(stopEvent?.delta?.stop_reason).toBe('tool_use')
+})
+
+test('JSON fallback: preserves HY3-looking text for non-Tencent model names', async () => {
+  const text =
+    '<tool_call:example>TaskCreate\nsubject: merely a documentation example\n</tool_call:example>'
+  const events = await collectFallbackEvents({
+    id: 'chatcmpl-json-non-tencent-hy3',
+    model: 'other/hy3-documentation',
+    choices: [
+      {
+        message: { role: 'assistant', content: text },
+        finish_reason: 'stop',
+      },
+    ],
+  }, 'other/hy3-documentation')
+  const toolStart = events.find(
+    event =>
+      event.type === 'content_block_start' &&
+      typeof event.content_block === 'object' &&
+      event.content_block !== null &&
+      (event.content_block as Record<string, unknown>).type === 'tool_use',
+  )
+  const textDelta = events.find(
+    event =>
+      event.type === 'content_block_delta' &&
+      typeof event.delta === 'object' &&
+      event.delta !== null &&
+      (event.delta as Record<string, unknown>).type === 'text_delta',
+  ) as { delta?: { text?: string } } | undefined
+
+  expect(toolStart).toBeUndefined()
+  expect(textDelta?.delta?.text).toBe(text)
+})
+
+test('JSON fallback: empty tool_calls array does not block raw-text recovery', async () => {
+  // tool_calls: [] is truthy; it must be treated as "no structured tool calls"
+  // so the raw "Tool calls requested" recovery still runs.
+  const events = await collectFallbackEvents({
+    id: 'chatcmpl-json-empty-tc',
+    model: 'fake-model',
+    choices: [
+      {
+        message: {
+          role: 'assistant',
+          tool_calls: [],
+          content:
+            'Tool calls requested:\n- Bash({"command":"ls"}) [id: call_empty_tc]',
+        },
+        finish_reason: 'stop',
+      },
+    ],
+  })
+  const toolStart = events.find(
+    event =>
+      event.type === 'content_block_start' &&
+      typeof event.content_block === 'object' &&
+      event.content_block !== null &&
+      (event.content_block as Record<string, unknown>).type === 'tool_use',
+  ) as { content_block?: Record<string, unknown> } | undefined
+  expect(toolStart?.content_block).toMatchObject({
+    type: 'tool_use',
+    id: 'call_empty_tc',
+    name: 'Bash',
+  })
+})
+
+test('JSON fallback: empty tool_calls does not block raw-text recovery on array content', async () => {
+  // Companion to the string-content case above: the array-content branch must
+  // also treat tool_calls: [] as "no structured tool calls" so raw recovery runs.
+  const events = await collectFallbackEvents({
+    id: 'chatcmpl-json-empty-tc-array',
+    model: 'fake-model',
+    choices: [
+      {
+        message: {
+          role: 'assistant',
+          tool_calls: [],
+          content: [
+            { type: 'text', text: 'Tool calls requested:' },
+            { type: 'text', text: '- Bash({"command":"ls"}) [id: call_empty_tc_arr]' },
+          ],
+        },
+        finish_reason: 'stop',
+      },
+    ],
+  })
+  const toolStart = events.find(
+    event =>
+      event.type === 'content_block_start' &&
+      typeof event.content_block === 'object' &&
+      event.content_block !== null &&
+      (event.content_block as Record<string, unknown>).type === 'tool_use',
+  ) as { content_block?: Record<string, unknown> } | undefined
+  expect(toolStart?.content_block).toMatchObject({
+    type: 'tool_use',
+    id: 'call_empty_tc_arr',
+    name: 'Bash',
+  })
 })
