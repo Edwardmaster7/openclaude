@@ -728,6 +728,11 @@ export type GlobalConfig = {
   // Use a different (e.g. cheaper/faster) model for compaction.
   // Defaults to mainLoopModel when unset.
   compactModel?: string
+
+  // Gemini context caching configuration parameters
+  geminiContextCachingEnabled?: boolean
+  geminiContextCachingTtl?: number
+  geminiContextCachingThreshold?: number
 }
 
 /**
@@ -780,6 +785,9 @@ function createDefaultGlobalConfig(): GlobalConfig {
     openaiAdditionalModelOptionsCacheByProfile: {},
     knowledgeGraphEnabled: true,
     maxMessagesCompactionThreshold: 'off',
+    geminiContextCachingEnabled: false,
+    geminiContextCachingTtl: 900,
+    geminiContextCachingThreshold: 0,
   }
   return config
 }
@@ -836,6 +844,9 @@ export const GLOBAL_CONFIG_KEYS = [
   'logoColor',
   'maxMessagesCompactionThreshold',
   'compactModel',
+  'geminiContextCachingEnabled',
+  'geminiContextCachingTtl',
+  'geminiContextCachingThreshold',
 ] as const
 
 export type GlobalConfigKey = (typeof GLOBAL_CONFIG_KEYS)[number]

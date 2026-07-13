@@ -95,6 +95,13 @@ import {
   getStreamStats,
 } from '../../utils/streamingOptimizer.js'
 import { stableStringifyJson } from '../../utils/stableStringify.js'
+import { getGlobalConfig } from '../../utils/config.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { roughTokenCountEstimationForMessages, roughTokenCountEstimation } from '../tokenEstimation.js'
+import { join } from 'node:path'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import crypto from 'node:crypto'
+
 
 const GITHUB_429_MAX_RETRIES = 3
 const GITHUB_429_BASE_DELAY_SEC = 1
@@ -2199,10 +2206,68 @@ class OpenAIShimStream {
   }
 }
 
+// Gemini context caching types and persistence
+type GeminiContextCacheEntry = {
+  cacheName: string
+  expireTime: number
+  model: string
+}
+
+function getGeminiDiskCachePath(): string {
+  return join(getClaudeConfigHomeDir(), 'gemini-context-cache.json')
+}
+
+function loadGeminiContextCache(): Map<string, GeminiContextCacheEntry> {
+  const path = getGeminiDiskCachePath()
+  if (!existsSync(path)) return new Map()
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf8'))
+    const map = new Map<string, GeminiContextCacheEntry>()
+    const now = Date.now()
+    for (const [key, value] of Object.entries(data)) {
+      const entry = value as GeminiContextCacheEntry
+      if (entry && entry.expireTime > now) {
+        map.set(key, entry)
+      }
+    }
+    return map
+  } catch {
+    return new Map()
+  }
+}
+
+function saveGeminiContextCache(map: Map<string, GeminiContextCacheEntry>) {
+  const path = getGeminiDiskCachePath()
+  try {
+    const obj: Record<string, GeminiContextCacheEntry> = {}
+    const now = Date.now()
+    for (const [key, value] of map.entries()) {
+      if (value.expireTime > now) {
+        obj[key] = value
+      }
+    }
+    writeFileSync(path, JSON.stringify(obj, null, 2), 'utf8')
+  } catch {
+    // Ignore cache persistence write errors
+  }
+}
+
+let geminiContextCacheMap: Map<string, GeminiContextCacheEntry> | undefined
+
+function getGeminiContextCache(): Map<string, GeminiContextCacheEntry> {
+  if (!geminiContextCacheMap) {
+    geminiContextCacheMap = loadGeminiContextCache()
+  }
+  return geminiContextCacheMap
+}
+
+
 class OpenAIShimMessages {
   private defaultHeaders: Record<string, string>
   private reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
   private providerOverride?: { model: string; baseURL: string; apiKey: string }
+  private lastCacheName?: string
+  private lastPrefixHash?: string
 
   constructor(defaultHeaders: Record<string, string>, reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh', providerOverride?: { model: string; baseURL: string; apiKey: string }) {
     this.defaultHeaders = filterAnthropicHeaders(defaultHeaders)
@@ -2401,14 +2466,30 @@ class OpenAIShimMessages {
       })
     }
 
-    return this._doOpenAIRequest(request, params, options)
+    try {
+      return await this._doOpenAIRequest(request, params, options)
+    } catch (err) {
+      if (this.lastCacheName && err instanceof APIError && (err.status === 404 || err.status === 400) && err.message.toLowerCase().includes('cache')) {
+        logForDebugging(`[GeminiContextCaching] Cache error detected (${err.message}). Retrying without cache...`)
+        if (this.lastPrefixHash) {
+          getGeminiContextCache().delete(this.lastPrefixHash)
+          saveGeminiContextCache(getGeminiContextCache())
+        }
+        return this._doOpenAIRequest(request, params, { ...options, skipGeminiCache: true })
+      }
+      throw err
+    }
   }
 
   private async _doOpenAIRequest(
     request: ReturnType<typeof resolveProviderRequest>,
-    params: ShimCreateParams,
-    options?: { signal?: AbortSignal; headers?: Record<string, string> },
+    rawParams: ShimCreateParams,
+    options?: { signal?: AbortSignal; headers?: Record<string, string>; skipGeminiCache?: boolean },
   ): Promise<Response> {
+    let params = rawParams
+    let cacheName: string | undefined
+    let prefixHash = ''
+
     // Local backends (llama.cpp, vLLM, Ollama, LM Studio, …) do not implement
     // the cloud-side caching/strict-validation behaviours that several of our
     // pre-send transforms target. Computing the fast-path config once here
@@ -2423,6 +2504,209 @@ class OpenAIShimMessages {
     const compressedMessages = fastPath.skipToolHistoryCompression
       ? rawMessages
       : compressToolHistory(rawMessages, request.resolvedModel)
+
+    // Gemini context caching logic
+    const isGemini = isGeminiMode() ||
+      request.baseUrl.includes('generativelanguage.googleapis.com') ||
+      request.resolvedModel.toLowerCase().includes('gemini')
+    const globalConfig = getGlobalConfig()
+    let prefixMessages: typeof compressedMessages = []
+
+    if (globalConfig.geminiContextCachingEnabled && isGemini && !options?.skipGeminiCache) {
+      try {
+        prefixMessages = compressedMessages.slice(0, -1)
+        
+        const systemText = convertSystemPrompt(params.system) || ''
+        const systemTokens = roughTokenCountEstimation(systemText)
+        const toolsTokens = params.tools ? roughTokenCountEstimation(JSON.stringify(params.tools)) : 0
+        const prefixMessagesTokens = prefixMessages.length > 0
+          ? roughTokenCountEstimationForMessages(prefixMessages.map(m => ({
+              type: m.role,
+              message: { content: m.content },
+            })))
+          : 0
+        
+        const totalPrefixTokens = systemTokens + toolsTokens + prefixMessagesTokens
+        
+        const modelLower = request.resolvedModel.toLowerCase()
+        const isGemini3 = modelLower.includes('gemini-3')
+        const autoThreshold = isGemini3 ? 4096 : 2048
+        const minThreshold = globalConfig.geminiContextCachingThreshold || autoThreshold
+        
+        if (totalPrefixTokens >= minThreshold) {
+          prefixHash = crypto.createHash('sha256')
+            .update(systemText)
+            .update(stableStringifyJson(params.tools || []))
+            .update(stableStringifyJson(prefixMessages || []))
+            .update(request.resolvedModel)
+            .digest('hex')
+          
+          const now = Date.now()
+          const cachedEntry = getGeminiContextCache().get(prefixHash)
+          
+          if (cachedEntry && cachedEntry.expireTime > now && cachedEntry.model === request.resolvedModel) {
+            cacheName = cachedEntry.cacheName
+            logForDebugging(`[GeminiContextCaching] Cache hit: ${cacheName}`)
+          } else {
+            if (cachedEntry) {
+              getGeminiContextCache().delete(prefixHash)
+            }
+            
+            let modelName = request.resolvedModel
+            if (!modelName.startsWith('models/') && !modelName.startsWith('publishers/')) {
+              modelName = `models/${modelName}`
+            }
+            
+            const cachedContentsList: Array<{ role: string; parts: Array<Record<string, unknown>> }> = []
+            const toolUseIdToName = new Map<string, string>()
+            for (const msg of compressedMessages) {
+              if (!Array.isArray(msg.content)) continue
+              for (const block of msg.content as Array<{ type?: string; id?: string; name?: string }>) {
+                if (block.type === 'tool_use' && block.id && block.name) {
+                  toolUseIdToName.set(block.id, block.name)
+                }
+              }
+            }
+            
+            for (const msg of prefixMessages) {
+              const role = msg.role === 'assistant' ? 'model' : 'user'
+              const parts: Array<Record<string, unknown>> = []
+              
+              if (typeof msg.content === 'string') {
+                parts.push({ text: msg.content })
+              } else if (Array.isArray(msg.content)) {
+                for (const block of msg.content as Array<{ type?: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown; is_error?: boolean }>) {
+                  if (block.type === 'text' && block.text) {
+                    parts.push({ text: block.text })
+                  } else if (block.type === 'tool_use' && block.id && block.name) {
+                    parts.push({
+                      functionCall: {
+                        name: block.name,
+                        args: block.input ?? {},
+                      },
+                    })
+                  } else if (block.type === 'tool_result' && block.tool_use_id) {
+                    const funcName = toolUseIdToName.get(block.tool_use_id) ?? block.tool_use_id
+                    let resultContent = typeof block.content === 'string'
+                      ? block.content
+                      : Array.isArray(block.content)
+                        ? (block.content as Array<{ type?: string; text?: string }>)
+                          .filter(b => b.type === 'text')
+                          .map(b => b.text ?? '')
+                          .join('\n')
+                        : ''
+                    if (block.is_error) {
+                      resultContent = `Error: ${resultContent}`
+                    }
+                    parts.push({
+                      functionResponse: {
+                        name: funcName,
+                        response: {
+                          name: funcName,
+                          content: resultContent,
+                        },
+                      },
+                    })
+                  }
+                }
+              }
+              if (parts.length > 0) {
+                cachedContentsList.push({ role, parts })
+              }
+            }
+            
+            const cacheBody: Record<string, unknown> = {
+              model: modelName,
+            }
+            if (cachedContentsList.length > 0) {
+              cacheBody.contents = cachedContentsList
+            }
+            if (systemText) {
+              cacheBody.systemInstruction = { parts: [{ text: systemText }] }
+            }
+            if (params.tools && params.tools.length > 0) {
+              const functionDeclarations = (params.tools as Array<{
+                name?: string
+                description?: string
+                input_schema?: Record<string, unknown>
+              }>).map(tool => ({
+                name: tool.name ?? '',
+                description: tool.description ?? '',
+                ...(tool.input_schema ? { parameters: tool.input_schema } : {}),
+              }))
+              if (functionDeclarations.length > 0) {
+                cacheBody.tools = [{ functionDeclarations }]
+              }
+            }
+            
+            const ttlSeconds = globalConfig.geminiContextCachingTtl ?? 900
+            cacheBody.ttl = `${ttlSeconds}s`
+            
+            let cacheUrl = request.baseUrl
+            if (cacheUrl.endsWith('/openai')) {
+              cacheUrl = cacheUrl.slice(0, -7)
+            }
+            cacheUrl = `${cacheUrl}/cachedContents`
+            
+            const cacheHeaders: Record<string, string> = {
+              'Content-Type': 'application/json',
+            }
+            const geminiCredential = await resolveGeminiCredential(process.env)
+            if (geminiCredential.kind === 'api-key') {
+              cacheHeaders['x-goog-api-key'] = geminiCredential.credential
+            } else if (geminiCredential.kind !== 'none') {
+              cacheHeaders['Authorization'] = `Bearer ${geminiCredential.credential}`
+              if ('projectId' in geminiCredential && geminiCredential.projectId) {
+                cacheHeaders['x-goog-user-project'] = geminiCredential.projectId
+              }
+            }
+            
+            logForDebugging(`[GeminiContextCaching] Creating context cache...`)
+            const createRes = await fetchWithProxyRetry(cacheUrl, {
+              method: 'POST',
+              headers: cacheHeaders,
+              body: JSON.stringify(cacheBody),
+            })
+            
+            if (createRes.ok) {
+              const createData = await createRes.json() as { name: string; expireTime: string }
+              cacheName = createData.name
+              const expireTime = Date.parse(createData.expireTime) || (Date.now() + ttlSeconds * 1000)
+              
+              getGeminiContextCache().set(prefixHash, {
+                cacheName,
+                expireTime,
+                model: request.resolvedModel,
+              })
+              saveGeminiContextCache(getGeminiContextCache())
+              logForDebugging(`[GeminiContextCaching] Cache successfully created: ${cacheName}`)
+            } else {
+              const errText = await createRes.text()
+              logForDebugging(`[GeminiContextCaching] Failed to create cache: status=${createRes.status} body=${errText}`, { level: 'warn' })
+            }
+          }
+        }
+      } catch (err) {
+        logForDebugging(`[GeminiContextCaching] Error during cache process: ${err}`, { level: 'warn' })
+      }
+    }
+
+    this.lastCacheName = cacheName
+    this.lastPrefixHash = prefixHash
+
+    if (cacheName) {
+      params = {
+        ...params,
+        system: undefined,
+        tools: undefined,
+        messages: compressedMessages.slice(prefixMessages.length),
+      }
+    } else {
+      params = {
+        ...params,
+        messages: compressedMessages,
+      }
+    }
     const runtimeShimContext = resolveOpenAIShimRuntimeContext({
       processEnv: process.env,
       baseUrl: request.baseUrl,
@@ -2442,7 +2726,12 @@ class OpenAIShimMessages {
         : shimConfig.endpointPath?.startsWith('/models/gemini-')
           ? 'gemini'
           : request.transport
-    const openaiMessages = convertMessages(compressedMessages, params.system, {
+    const messagesToConvert = (params.messages ?? []) as Array<{
+      role: string
+      message?: { role?: string; content?: unknown }
+      content?: unknown
+    }>
+    const openaiMessages = convertMessages(messagesToConvert, params.system, {
       preserveReasoningContent: shimConfig.preserveReasoningContent,
       reasoningContentFallback: shimConfig.reasoningContentFallback,
       preserveGeminiThoughtSignature: shouldPreserveGeminiThoughtSignature(
@@ -2456,6 +2745,9 @@ class OpenAIShimMessages {
       messages: openaiMessages,
       stream: params.stream ?? false,
       store: false,
+    }
+    if (cacheName) {
+      body.cached_content = cacheName
     }
     // Emit reasoning_effort for chat_completions when the resolved provider
      // request carries a reasoning effort (set via /effort, model alias default,
@@ -2840,6 +3132,10 @@ class OpenAIShimMessages {
         }
       }
 
+      if (cacheName) {
+        geminiBody.cachedContent = cacheName
+      }
+
       return geminiBody
     }
 
@@ -2850,7 +3146,6 @@ class OpenAIShimMessages {
       ...filterAnthropicHeaders(options?.headers),
     }
 
-    const isGemini = isGeminiMode()
     const routeCredential = resolveRouteCredentialValue({
       routeId: runtimeShimContext.routeId,
       baseUrl: request.baseUrl,
