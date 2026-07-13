@@ -10,6 +10,10 @@ import {
   type CacheMetrics,
 } from '../../services/api/cacheMetrics.js'
 import type { LocalCommandCall } from '../../types/command.js'
+import { createSystemMessage } from '../../utils/messages.js'
+
+/** Stable UUID so the loading placeholder can be removed after work completes. */
+const LOADING_MSG_UUID = 'cache-stats-loading-placeholder'
 
 // Cap the per-request breakdown to keep output readable. Users wanting
 // the full history can rely on OPENCLAUDE_LOG_TOKEN_USAGE=verbose for
@@ -20,8 +24,9 @@ function formatRow(entry: CacheStatsEntry, idx: number): string {
   // `YYYY-MM-DD HH:MM:SS` — long-running sessions can span midnight and a
   // bare time-of-day makes the wrong row look "most recent" when two
   // entries on different days share the same HH:MM:SS.
-  const iso = new Date(entry.timestamp).toISOString()
-  const ts = `${iso.slice(0, 10)} ${iso.slice(11, 19)}`
+  const d = new Date(entry.timestamp)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const ts = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
   const line = formatCacheMetricsCompact(entry.metrics)
   return `  #${String(idx + 1).padStart(3)}  ${ts}  ${entry.label.padEnd(28).slice(0, 28)}  ${line}`
 }
@@ -30,10 +35,24 @@ function summarize(label: string, m: CacheMetrics): string {
   return `${label.padEnd(18)}${formatCacheMetricsFull(m)}`
 }
 
-export const call: LocalCommandCall = async () => {
+export const call: LocalCommandCall = async (args, context) => {
   const history = getCacheStatsHistory()
+  const isHeavy = history.length > 50
+
+  if (isHeavy && context?.setMessages) {
+    const loadingMsg = createSystemMessage('⏳ Calculating cache statistics…', 'info')
+    // Override uuid so we can reliably remove it after the work is done.
+    ;(loadingMsg as any).uuid = LOADING_MSG_UUID
+    context.setMessages((prev) => [...prev, loadingMsg])
+    await new Promise((resolve) => setTimeout(resolve, 600))
+  }
+
   const session = getSessionCacheMetrics()
   const turn = getCurrentTurnCacheMetrics()
+
+  if (isHeavy && context?.setMessages) {
+    context.setMessages((prev) => prev.filter((m) => (m.uuid as any) !== LOADING_MSG_UUID))
+  }
 
   if (history.length === 0) {
     return {

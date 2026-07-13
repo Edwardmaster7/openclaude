@@ -163,6 +163,28 @@ describe('extractCacheReadFromRawUsage — single source of truth for shim layer
     ).toBe(3_200)
   })
 
+  test('Gemini: cachedContentTokenCount / nested shapes', () => {
+    expect(
+      extractCacheReadFromRawUsage({
+        cachedContentTokenCount: 1200,
+      }),
+    ).toBe(1200)
+    expect(
+      extractCacheReadFromRawUsage({
+        usageMetadata: {
+          cachedContentTokenCount: 1500,
+        },
+      }),
+    ).toBe(1500)
+    expect(
+      extractCacheReadFromRawUsage({
+        usageMetadata: {
+          cached_content_token_count: 1800,
+        },
+      }),
+    ).toBe(1800)
+  })
+
   test('no cache fields at all → 0 (Copilot/Ollama/unknown shape)', () => {
     expect(extractCacheReadFromRawUsage({ prompt_tokens: 500 })).toBe(0)
   })

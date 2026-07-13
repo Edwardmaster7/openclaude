@@ -484,7 +484,60 @@ export function Config({
         enabled
       });
     }
+  }, {
+    id: 'geminiContextCachingEnabled',
+    label: 'Gemini context caching',
+    value: globalConfig.geminiContextCachingEnabled ?? false,
+    type: 'boolean' as const,
+    onChange(enabled: boolean) {
+      saveGlobalConfig(current => ({
+        ...current,
+        geminiContextCachingEnabled: enabled
+      }));
+      setGlobalConfig({
+        ...getGlobalConfig(),
+        geminiContextCachingEnabled: enabled
+      });
+      logEvent('tengu_gemini_context_caching_setting_changed', {
+        enabled
+      });
+    }
+  }, {
+    id: 'geminiContextCachingTtl',
+    label: 'Gemini cache TTL (seconds)',
+    value: String(globalConfig.geminiContextCachingTtl ?? 900),
+    options: ['60', '300', '900', '1800', '3600', '7200'],
+    type: 'enum' as const,
+    onChange(ttlStr: string) {
+      const ttl = parseInt(ttlStr, 10) || 900;
+      saveGlobalConfig(current => ({
+        ...current,
+        geminiContextCachingTtl: ttl
+      }));
+      setGlobalConfig({
+        ...getGlobalConfig(),
+        geminiContextCachingTtl: ttl
+      });
+    }
+  }, {
+    id: 'geminiContextCachingThreshold',
+    label: 'Gemini cache min tokens',
+    value: String(globalConfig.geminiContextCachingThreshold ?? 0),
+    options: ['0', '1024', '2048', '4096', '8192', '16384'],
+    type: 'enum' as const,
+    onChange(threshStr: string) {
+      const threshold = parseInt(threshStr, 10) || 0;
+      saveGlobalConfig(current => ({
+        ...current,
+        geminiContextCachingThreshold: threshold
+      }));
+      setGlobalConfig({
+        ...getGlobalConfig(),
+        geminiContextCachingThreshold: threshold
+      });
+    }
   },
+
   // Fast mode toggle (internal-only, eliminated from external builds)
   ...(isFastModeEnabled() && isFastModeAvailable() ? [{
     id: 'fastMode',

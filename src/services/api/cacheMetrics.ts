@@ -319,8 +319,12 @@ export function extractCacheReadFromRawUsage(usage: RawUsage): number {
   // 4. DeepSeek — hit/miss split at top level.
   const deepseek = asNumber(u.prompt_cache_hit_tokens)
   if (deepseek > 0) return deepseek
-  // 5. Gemini — cached_content_token_count.
-  const gemini = asNumber(u.cached_content_token_count)
+  // 5. Gemini — cached_content_token_count / cachedContentTokenCount.
+  const gemini =
+    asNumber(u.cached_content_token_count) ||
+    asNumber(u.cachedContentTokenCount) ||
+    asNumber(pickPath(usage, ['usageMetadata', 'cachedContentTokenCount'])) ||
+    asNumber(pickPath(usage, ['usageMetadata', 'cached_content_token_count']))
   if (gemini > 0) return gemini
   return 0
 }

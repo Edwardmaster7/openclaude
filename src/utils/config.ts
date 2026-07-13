@@ -733,6 +733,11 @@ export type GlobalConfig = {
   // Use a different (e.g. cheaper/faster) model for compaction.
   // Defaults to mainLoopModel when unset.
   compactModel?: string
+
+  // Gemini context caching configuration parameters
+  geminiContextCachingEnabled?: boolean
+  geminiContextCachingTtl?: number
+  geminiContextCachingThreshold?: number
 }
 
 /**
@@ -787,6 +792,9 @@ function createDefaultGlobalConfig(): GlobalConfig {
     // Omitted by default so callers can distinguish "unset" from an explicit
     // persisted "off"; normalizeMaxMessagesCompactionThreshold keeps the
     // effective default disabled.
+    geminiContextCachingEnabled: false,
+    geminiContextCachingTtl: 900,
+    geminiContextCachingThreshold: 0,
   }
   return config
 }
@@ -843,6 +851,9 @@ export const GLOBAL_CONFIG_KEYS = [
   'logoColor',
   'maxMessagesCompactionThreshold',
   'compactModel',
+  'geminiContextCachingEnabled',
+  'geminiContextCachingTtl',
+  'geminiContextCachingThreshold',
 ] as const
 
 export type GlobalConfigKey = (typeof GLOBAL_CONFIG_KEYS)[number]
@@ -2115,4 +2126,5 @@ export function _setGlobalConfigCacheForTesting(
 ): void {
   globalConfigCache.config = config
   globalConfigCache.mtime = config ? Date.now() : 0
+  testGlobalConfigForTesting = config ?? undefined
 }
