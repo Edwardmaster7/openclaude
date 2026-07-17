@@ -10,10 +10,6 @@ import {
   type CacheMetrics,
 } from '../../services/api/cacheMetrics.js'
 import type { LocalCommandCall } from '../../types/command.js'
-import { createSystemMessage } from '../../utils/messages.js'
-
-/** Stable UUID so the loading placeholder can be removed after work completes. */
-const LOADING_MSG_UUID = 'cache-stats-loading-placeholder'
 
 // Cap the per-request breakdown to keep output readable. Users wanting
 // the full history can rely on OPENCLAUDE_LOG_TOKEN_USAGE=verbose for
@@ -37,23 +33,8 @@ function summarize(label: string, m: CacheMetrics): string {
 
 export const call: LocalCommandCall = async (args, context) => {
   const history = getCacheStatsHistory()
-  const isHeavy = history.length > 50
-
-  if (isHeavy && context?.setMessages) {
-    const loadingMsg = createSystemMessage('⏳ Calculating cache statistics…', 'info')
-    // Override uuid so we can reliably remove it after the work is done.
-    ;(loadingMsg as any).uuid = LOADING_MSG_UUID
-    context.setMessages((prev) => [...prev, loadingMsg])
-    await new Promise((resolve) => setTimeout(resolve, 600))
-  }
-
   const session = getSessionCacheMetrics()
   const turn = getCurrentTurnCacheMetrics()
-
-  if (isHeavy && context?.setMessages) {
-    context.setMessages((prev) => prev.filter((m) => (m.uuid as any) !== LOADING_MSG_UUID))
-  }
-
   if (history.length === 0) {
     return {
       type: 'text',
