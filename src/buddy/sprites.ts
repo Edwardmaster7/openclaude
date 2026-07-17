@@ -24,6 +24,13 @@ import {
   sprout,
   turtle,
   ufo,
+  corsair,
+  ember,
+  kage,
+  kaio,
+  merlin,
+  robinhood,
+  strawhat,
 } from "./types.js";
 
 // Each sprite is 10 lines tall, 24 wide (after {E}→1char substitution).
@@ -942,6 +949,167 @@ const BODIES: Record<Species, string[][]> = {
       "        \\/    \\/        ",
     ],
   ],
+  [robinhood]: [
+    [
+      '    <,___   ',
+      '     ({E}.{E})  ',
+      '   /(   )\\  ',
+      '   (|   |   ',
+      '   _/   \\_  ',
+    ],
+    [
+      '   <<,___   ',
+      '     ({E}.{E})  ',
+      '   /(   )\\  ',
+      '   (|   |   ',
+      '   _/   \\_  ',
+    ],
+    [
+      '    <,___   ',
+      '     ({E}.{E})  ',
+      '   ((   )\\  ',
+      '    |   |   ',
+      '   _/   \\_  ',
+    ],
+  ],
+  [kaio]: [
+    [
+      '   \\|/|/    ',
+      '    ({E}.{E})   ',
+      '   /(   )\\  ',
+      '    |   |   ',
+      '   _/   \\_  ',
+    ],
+    [
+      '   \\|/|//   ',
+      '    ({E}.{E})   ',
+      '   /(   )\\  ',
+      '    |   |   ',
+      '   _/   \\_  ',
+    ],
+    [
+      '  *\\|/|/*   ',
+      '    ({E}.{E})   ',
+      '   /(   )\\  ',
+      '    |   |   ',
+      '   _/   \\_  ',
+    ],
+  ],
+  [strawhat]: [
+    [
+      '    ____    ',
+      '   <____>   ',
+      '   ({E}.{E})    ',
+      '   /|~~|\\   ',
+      '   _/  \\_   ',
+    ],
+    [
+      '    ____    ',
+      '   <____>~  ',
+      '   ({E}.{E})    ',
+      '   /|~~|\\   ',
+      '   _/  \\_   ',
+    ],
+    [
+      '    ____    ',
+      '   <____>   ',
+      '   ({E}.{E})    ',
+      '   \\|~~|/   ',
+      '   _/  \\_   ',
+    ],
+  ],
+  [merlin]: [
+    [
+      '    /\\      ',
+      '   /__\\     ',
+      '  ~({E}.{E})~   ',
+      '   /|##|\\   ',
+      '   _/~~\\_   ',
+    ],
+    [
+      '   */\\      ',
+      '   /__\\     ',
+      '  ~({E}.{E})~   ',
+      '   /|##|\\   ',
+      '   _/~~\\_   ',
+    ],
+    [
+      '    /\\      ',
+      '   /__\\     ',
+      '  ~({E}.{E})~   ',
+      '  |/|##|\\   ',
+      '   _/~~\\_   ',
+    ],
+  ],
+  [kage]: [
+    [
+      '   ____     ',
+      '  /____\\    ',
+      '  |({E}{E})|    ',
+      '   |==|~    ',
+      '   _/\\_     ',
+    ],
+    [
+      '   ____     ',
+      '  /____\\    ',
+      '  |({E}{E})|    ',
+      '   |==|~~   ',
+      '   _/\\_     ',
+    ],
+    [
+      '   ____  *  ',
+      '  /____\\    ',
+      '  |({E}{E})|    ',
+      '   |==|~    ',
+      '   _/\\_     ',
+    ],
+  ],
+  [ember]: [
+    [
+      '    ^^      ',
+      '  <({E}{E})     ',
+      '  (~~~~)>   ',
+      '   |  |     ',
+      '  _/  \\_~   ',
+    ],
+    [
+      '  o ^^      ',
+      '  <({E}{E})     ',
+      '  (~~~~)>   ',
+      '   |  |     ',
+      '  _/  \\_~   ',
+    ],
+    [
+      '    ^^      ',
+      '  <({E}{E})     ',
+      '  (^^^^)>   ',
+      '   |  |     ',
+      '  _/  \\_~   ',
+    ],
+  ],
+  [corsair]: [
+    [
+      '   _/\\_     ',
+      '  [____]    ',
+      '   ({E}x)     ',
+      '  /|++|\\    ',
+      '   _/\\_     ',
+    ],
+    [
+      '   _/\\_  ,> ',
+      '  [____]    ',
+      '   ({E}x)     ',
+      '  /|++|\\    ',
+      '   _/\\_     ',
+    ],
+    [
+      '   _/\\_     ',
+      '  [____]    ',
+      '   ({E}x)     ',
+      '  \\|++|/    ',
+      '   _/\\_     ',
+    ],
+  ],
 };
 
 const HAT_LINES: Record<Hat, string> = {
@@ -959,6 +1127,210 @@ const HAT_LINES: Record<Hat, string> = {
   party: "      <<::>>____        ",
   headphones: "      [[====]]          ",
 };
+
+const SHOOT_FRAMES: Record<Species, string[][]> = {
+  [duck]: BODIES[duck],
+  [goose]: BODIES[goose],
+  [blob]: BODIES[blob],
+  [cat]: BODIES[cat],
+  [dragon]: BODIES[dragon],
+  [octopus]: BODIES[octopus],
+  [owl]: BODIES[owl],
+  [penguin]: BODIES[penguin],
+  [turtle]: BODIES[turtle],
+  [snail]: BODIES[snail],
+  [ghost]: BODIES[ghost],
+  [axolotl]: BODIES[axolotl],
+  [capybara]: BODIES[capybara],
+  [cactus]: BODIES[cactus],
+  [robot]: BODIES[robot],
+  [rabbit]: BODIES[rabbit],
+  [mushroom]: BODIES[mushroom],
+  [chonk]: BODIES[chonk],
+  [lion]: BODIES[lion],
+  [crab]: BODIES[crab],
+  [bear]: BODIES[bear],
+  [ufo]: BODIES[ufo],
+  [sprout]: BODIES[sprout],
+  [bat]: BODIES[bat],
+  [robinhood]: [
+    [
+      // nock
+      '    <,___   ',
+      '     ({E}.{E})  ',
+      '  <-(   )\\  ',
+      '   (|   |   ',
+      '   _/   \\_  ',
+    ],
+    [
+      // full draw
+      '    <,___   ',
+      '     ({E}.{E})  ',
+      '  <==(   )> ',
+      '   (|   |   ',
+      '   _/   \\_  ',
+    ],
+    [
+      // loose — string vibrates; the arrow hands off to CompanionActionFX
+      '    <,___   ',
+      '     ({E}.{E})  ',
+      '   ~(   )\\  ',
+      '   (|   |   ',
+      '   _/   \\_  ',
+    ],
+  ],
+  [kaio]: [
+    [
+      '   \\|/|/    ',
+      '    ({E}.{E})   ',
+      '  ((   )\\   ',
+      '    |   |   ',
+      '   _/   \\_  ',
+    ],
+    [
+      '   \\|/|/    ',
+      '    ({E}.{E})   ',
+      ' o((   )\\   ',
+      '    |   |   ',
+      '   _/   \\_  ',
+    ],
+    [
+      '   \\|/|/    ',
+      '    ({E}.{E})   ',
+      ' =((   )\\   ',
+      '    |   |   ',
+      '   _/   \\_  ',
+    ],
+  ],
+  [strawhat]: [
+    [
+      '    ____    ',
+      '   <____>   ',
+      '   ({E}.{E})    ',
+      '   /|~~|>   ',
+      '   _/  \\_   ',
+    ],
+    [
+      '    ____    ',
+      '   <____>   ',
+      '   ({E}.{E})    ',
+      '  o|~~|\\    ',
+      '   _/  \\_   ',
+    ],
+    [
+      '    ____    ',
+      '   <____>   ',
+      '   ({E}.{E})    ',
+      ' o-|~~|\\    ',
+      '   _/  \\_   ',
+    ],
+  ],
+  [merlin]: [
+    [
+      '    /\\      ',
+      '   /__\\     ',
+      '  ~({E}.{E})~   ',
+      '  |/|##|\\   ',
+      '   _/~~\\_   ',
+    ],
+    [
+      '  */\\       ',
+      '   /__\\     ',
+      '  ~({E}.{E})~   ',
+      '  |/|##|\\   ',
+      '   _/~~\\_   ',
+    ],
+    [
+      ' **/\\       ',
+      '   /__\\     ',
+      '  ~({E}.{E})~   ',
+      '  |/|##|\\   ',
+      '   _/~~\\_   ',
+    ],
+  ],
+  [kage]: [
+    [
+      '   ____     ',
+      '  /____\\    ',
+      '  |({E}{E})|    ',
+      '  -|==|~    ',
+      '   _/\\_     ',
+    ],
+    [
+      '   ____ *   ',
+      '  /____\\    ',
+      '  |({E}{E})|    ',
+      '  -|==|~    ',
+      '   _/\\_     ',
+    ],
+    [
+      '   ____     ',
+      '  /____\\    ',
+      '  |({E}{E})|    ',
+      '  ~|==|~    ',
+      '   _/\\_     ',
+    ],
+  ],
+  [ember]: [
+    [
+      '    ^^      ',
+      ' <<({E}{E})     ',
+      '  (~~~~)>   ',
+      '   |  |     ',
+      '  _/  \\_~   ',
+    ],
+    [
+      '    ^^      ',
+      '~<({E}{E})      ',
+      '  (^^^^)>   ',
+      '   |  |     ',
+      '  _/  \\_~   ',
+    ],
+    [
+      '    ^^      ',
+      ' <({E}{E})~     ',
+      '  (~~~~)>   ',
+      '   |  |     ',
+      '  _/  \\_~   ',
+    ],
+  ],
+  [corsair]: [
+    [
+      '   _/\\_     ',
+      '  [____]    ',
+      '   ({E}x)     ',
+      ' =/|++|\\    ',
+      '   _/\\_     ',
+    ],
+    [
+      '   _/\\_     ',
+      '  [____]    ',
+      '   ({E}x)     ',
+      '==/|++|\\    ',
+      '   _/\\_     ',
+    ],
+    [
+      '   _/\\_     ',
+      '  [____]    ',
+      '   ({E}x)     ',
+      ' */|++|\\    ',
+      '   _/\\_     ',
+    ],
+  ],
+};
+
+export function renderShootSprite(
+  bones: CompanionBones,
+  frame: number,
+): string[] {
+  const frames = SHOOT_FRAMES[bones.species];
+  const clamped = Math.min(Math.max(frame, 0), frames.length - 1);
+  return frames[clamped]!.map((line) => line.replaceAll("{E}", bones.eye));
+}
+
+export function shootFrameCount(species: Species): number {
+  return SHOOT_FRAMES[species].length;
+}
 
 export type OutfitStyle = {
   color?: string; // Outfit color (overrides rarity). If undefined, keeps rarity color.
@@ -1261,5 +1633,19 @@ export function renderFace(bones: CompanionBones): string {
       return `(${eye}${eye})`;
     case bat:
       return `(${eye}${eye})`;
+    case robinhood:
+      return `«(${eye})`;
+    case kaio:
+      return `\\(${eye})/`;
+    case strawhat:
+      return `∩(${eye})`;
+    case merlin:
+      return `^(${eye})`;
+    case kage:
+      return `|${eye}${eye}|`;
+    case ember:
+      return `<${eye}${eye}>`;
+    case corsair:
+      return `(${eye}x)`;
   }
 }

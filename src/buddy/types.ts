@@ -57,6 +57,37 @@ export const ufo = c(0x75, 0x66, 0x6f) as 'ufo'
 export const sprout = c(0x73, 0x70, 0x72, 0x6f, 0x75, 0x74) as 'sprout'
 export const bat = c(0x62, 0x61, 0x74) as 'bat'
 
+export const robinhood = c(
+  0x72,
+  0x6f,
+  0x62,
+  0x69,
+  0x6e,
+  0x68,
+  0x6f,
+  0x6f,
+  0x64,
+) as 'robinhood'
+export const kaio = c(0x6b, 0x61, 0x69, 0x6f) as 'kaio'
+export const strawhat = c(
+  0x73,
+  0x74,
+  0x72,
+  0x61,
+  0x77,
+  0x68,
+  0x61,
+  0x74,
+) as 'strawhat'
+export const merlin = c(0x6d, 0x65, 0x72, 0x6c, 0x69, 0x6e) as 'merlin'
+export const kage = c(0x6b, 0x61, 0x67, 0x65) as 'kage'
+export const ember = c(0x65, 0x6d, 0x62, 0x65, 0x72) as 'ember'
+export const corsair = c(0x63, 0x6f, 0x72, 0x73, 0x61, 0x69, 0x72) as 'corsair'
+
+// The deterministic hatch pool — every hero form. NEVER reorder or grow
+// this list casually: pick(rng, SPECIES) depends on SPECIES.length and
+// ordering, so any change re-rolls every existing user's hatched species
+// (their speciesOverride, if set, still wins).
 export const SPECIES = [
   duck,
   goose,
@@ -82,6 +113,13 @@ export const SPECIES = [
   ufo,
   sprout,
   bat,
+  robinhood,
+  kaio,
+  strawhat,
+  merlin,
+  kage,
+  ember,
+  corsair,
 ] as const
 export type Species = (typeof SPECIES)[number] // biome-ignore format: keep compact
 
@@ -147,6 +185,9 @@ export type StoredCompanion = CompanionSoul & {
   hatchedAt: number
   seed?: string
   species?: string
+  // Persisted /buddy set choice. Applied over the rolled bones' species in
+  // getCompanion(); does NOT touch rarity/stats (can't fake a legendary).
+  speciesOverride?: Species
 }
 
 export const RARITY_WEIGHTS = {
@@ -157,13 +198,44 @@ export const RARITY_WEIGHTS = {
   legendary: 1,
 } as const satisfies Record<Rarity, number>
 
-export const RARITY_STARS = {
-  common: '★',
-  uncommon: '★★',
-  rare: '★★★',
-  epic: '★★★★',
-  legendary: '★★★★★',
-} as const satisfies Record<Rarity, string>
+// Every hero's signature color. A full Record so adding a species without a
+// color is a compile error, not a silent fallback.
+export const SPECIES_COLORS: Record<
+  Species,
+  keyof import('../utils/theme.js').Theme
+> = {
+  [duck]: 'warning',
+  [goose]: 'inactive',
+  [blob]: 'success',
+  [cat]: 'warning',
+  [dragon]: 'error',
+  [octopus]: 'permission',
+  [owl]: 'inactive',
+  [penguin]: 'inactive',
+  [turtle]: 'success',
+  [snail]: 'inactive',
+  [ghost]: 'inactive',
+  [axolotl]: 'error',
+  [capybara]: 'warning',
+  [cactus]: 'success',
+  [robot]: 'inactive',
+  [rabbit]: 'inactive',
+  [mushroom]: 'error',
+  [chonk]: 'warning',
+  [lion]: 'warning',
+  [crab]: 'error',
+  [bear]: 'inactive',
+  [ufo]: 'success',
+  [sprout]: 'success',
+  [bat]: 'inactive',
+  [robinhood]: 'success',
+  [kaio]: 'warning',
+  [strawhat]: 'error',
+  [merlin]: 'autoAccept',
+  [kage]: 'inactive',
+  [ember]: 'error',
+  [corsair]: 'permission',
+}
 
 export const RARITY_COLORS = {
   common: 'inactive',
@@ -221,4 +293,10 @@ export type XpLossLog = {
   dailyLossDate: string
   solitarioCount: number
   lossesThisSession: number
+}
+
+export function companionColor(
+  companion: Pick<CompanionBones, 'species'>,
+): keyof import('../utils/theme.js').Theme {
+  return SPECIES_COLORS[companion.species]
 }
