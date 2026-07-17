@@ -38,6 +38,7 @@ import { logForDebugging } from '../utils/debug.js';
 import { QueryGuard } from '../utils/QueryGuard.js';
 import { getQueryGuardOptionsFromEnv } from '../utils/queryGuardConfig.js';
 import { QueryLifecycleOperationTracker, formatQueryLifecycleAbortSignalReason, formatQueryLifecycleLogMessage, getQueryTerminalReason, type QueryActiveOperationSnapshot, type QueryGuardTimeoutInfo, type QueryLifecycleContext, type QueryTerminalReason } from '../utils/queryLifecycle.js';
+import { resolveReplMaxTurns } from './replMaxTurns.js';
 import { createCombinedAbortSignal } from '../utils/combinedAbortSignal.js';
 import { isEnvTruthy } from '../utils/envUtils.js';
 import { formatTokens, truncateToWidth } from '../utils/format.js';
@@ -272,6 +273,7 @@ const WebBrowserPanelModule = feature('WEB_BROWSER_TOOL') ? require('../tools/We
 import { IssueFlagBanner } from '../components/PromptInput/IssueFlagBanner.js';
 import { useIssueFlagBanner } from '../hooks/useIssueFlagBanner.js';
 import { CompanionSprite, CompanionFloatingBubble, MIN_COLS_FOR_FULL_SPRITE } from '../buddy/CompanionSprite.js';
+import { CompanionActionFX } from '../buddy/CompanionActionFX.js';
 import { isBuddyEnabled } from '../buddy/feature.js';
 import { fireCompanionObserver } from '../buddy/observer.js';
 import { getLastDetectedFeedback, clearLastDetectedFeedback } from '../hooks/feedbackHook.js';
@@ -569,6 +571,8 @@ function summarizeActiveOperations(snapshot: QueryActiveOperationSnapshot): stri
 function logQueryLifecycle(event: string, context: QueryLifecycleContext, extras = ''): void {
   logForDebugging(formatQueryLifecycleLogMessage(event, context, extras));
 }
+// Default per-prompt cap for every local interactive REPL entrypoint. Headless
+// and SDK callers retain their explicit maxTurns contracts.
 export type Props = {
   commands: Command[];
   debug: boolean;
@@ -617,6 +621,8 @@ export type Props = {
   thinkingConfig: ThinkingConfig;
   // Model to fallback to when primary model returns overloaded errors (529)
   fallbackModel?: string;
+  // Bound a single interactive prompt's sequential tool-use turns.
+  maxTurns?: number;
 };
 export type Screen = 'prompt' | 'transcript';
 export function REPL({
@@ -646,8 +652,10 @@ export function REPL({
   directConnectConfig,
   sshSession,
   thinkingConfig,
-  fallbackModel
+  fallbackModel,
+  maxTurns: maxTurnsProp
 }: Props): React.ReactNode {
+  const maxTurns = resolveReplMaxTurns(maxTurnsProp)
   const isRemoteSession = !!remoteSessionConfig;
 
   // Env-var gates hoisted to mount-time — isEnvTruthy does toLowerCase+trim+
@@ -2809,6 +2817,7 @@ export function REPL({
           canUseTool,
           toolUseContext,
           fallbackModel,
+          maxTurns,
           querySource: getQuerySourceForREPL(),
           autoCompactTracking: getAutoCompactTrackingForSession(backgroundSessionId),
           onAutoCompactTrackingChange: tracking => {
@@ -2820,7 +2829,7 @@ export function REPL({
         agentDefinition: mainThreadAgentDefinition
       });
     })();
-  }, [abortController, mainLoopModel, toolPermissionContext, mainThreadAgentDefinition, getToolUseContext, customSystemPrompt, appendSystemPrompt, canUseTool, setAppState, getAutoCompactTrackingForSession, setAutoCompactTrackingForSession, fallbackModel]);
+  }, [abortController, mainLoopModel, toolPermissionContext, mainThreadAgentDefinition, getToolUseContext, customSystemPrompt, appendSystemPrompt, canUseTool, setAppState, getAutoCompactTrackingForSession, setAutoCompactTrackingForSession, fallbackModel, maxTurns]);
   const {
     handleBackgroundSession
   } = useSessionBackgrounding({
@@ -3041,6 +3050,7 @@ export function REPL({
       toolUseContext,
       querySource: getQuerySourceForREPL(),
       fallbackModel,
+      maxTurns,
       autoCompactTracking: queryAutoCompactTracking,
       onAutoCompactTrackingChange: tracking => {
         if (setAutoCompactTrackingForSessionIfUnchanged(querySessionId, expectedAutoCompactTracking, tracking)) {
@@ -3070,7 +3080,7 @@ export function REPL({
 
     // Signal that a query turn has completed successfully
     await onTurnComplete?.(messagesRef.current);
-  }, [initialMcpClients, resetLoadingState, getToolUseContext, toolPermissionContext, setAppState, customSystemPrompt, onTurnComplete, appendSystemPrompt, canUseTool, mainThreadAgentDefinition, onQueryEvent, sessionTitle, titleDisabled, getAutoCompactTrackingForSession, setAutoCompactTrackingForSession, setAutoCompactTrackingForSessionIfUnchanged, queryGuard]);
+  }, [initialMcpClients, resetLoadingState, getToolUseContext, toolPermissionContext, setAppState, customSystemPrompt, onTurnComplete, appendSystemPrompt, canUseTool, mainThreadAgentDefinition, onQueryEvent, sessionTitle, titleDisabled, maxTurns, getAutoCompactTrackingForSession, setAutoCompactTrackingForSession, setAutoCompactTrackingForSessionIfUnchanged, queryGuard]);
   const onQuery = useCallback(async (newMessages: MessageType[], abortController: AbortController, shouldQuery: boolean, additionalAllowedTools: string[], mainLoopModelParam: string, onBeforeQueryCallback?: (input: string, newMessages: MessageType[]) => Promise<boolean>, input?: string, effort?: EffortValue): Promise<void | false> => {
     // If this is a teammate, mark them as active when starting a turn
     if (isAgentSwarmsEnabled()) {
@@ -3644,6 +3654,13 @@ export function REPL({
       setInputMode('prompt');
       setIDESelection(undefined);
       setSubmitCount(_ => _ + 1);
+      if (isBuddyEnabled() && !isSlashCommand && inputMode === 'prompt') {
+        // Change token for the companion's signature action (one Enter = one
+        // shot; queued messages intentionally don't re-fire on dequeue).
+        // Real prompts only — slash commands and bash lines aren't "sending
+        // a message" and shouldn't launch projectiles.
+        setAppState(prev => ({ ...prev, companionShotAt: Date.now() }));
+      }
       helpers.clearBuffer();
       tipPickedThisTurnRef.current = false;
 
@@ -5141,7 +5158,7 @@ export function REPL({
             {/* Frustration-triggered transcript sharing prompt */}
             {frustrationDetection.state !== 'closed' && <FeedbackSurvey state={frustrationDetection.state} lastResponse={null} handleSelect={() => { }} handleTranscriptSelect={frustrationDetection.handleTranscriptSelect} inputValue={inputValue} setInputValue={setInputValue} />}
             {showIssueFlagBanner && <IssueFlagBanner />}
-            { }
+            {isBuddyEnabled() && companionVisible && !companionNarrow && <CompanionActionFX />}
             <PromptInput debug={debug} ideSelection={ideSelection} isLocalJSXCommandActive={isShowingLocalJSXCommand} getToolUseContext={getToolUseContext} toolPermissionContext={toolPermissionContext} setToolPermissionContext={setToolPermissionContext} apiKeyStatus={apiKeyStatus} commands={renderCommands} agents={agentDefinitions.activeAgents} isLoading={isLoading} onExit={handleExit} verbose={verbose} messages={messages} onAutoUpdaterResult={setAutoUpdaterResult} autoUpdaterResult={autoUpdaterResult} input={inputValue} onInputChange={setInputValue} mode={inputMode} onModeChange={setInputMode} stashedPrompt={stashedPrompt} setStashedPrompt={setStashedPrompt} submitCount={submitCount} onShowMessageSelector={handleShowMessageSelector} onMessageActionsEnter={
               // Works during isLoading — edit cancels first; uuid selection survives appends.
               feature('MESSAGE_ACTIONS') && isFullscreenEnvEnabled() && !disableMessageActions ? enterMessageActions : undefined} mcpClients={mcpClients} pastedContents={pastedContents} setPastedContents={setPastedContents} vimMode={vimMode} setVimMode={setVimMode} showBashesDialog={showBashesDialog} setShowBashesDialog={setShowBashesDialog} onSubmit={onSubmit} onAgentSubmit={onAgentSubmit} isSearchingHistory={isSearchingHistory} setIsSearchingHistory={setIsSearchingHistory} helpOpen={isHelpOpen} setHelpOpen={setIsHelpOpen} insertTextRef={feature('VOICE_MODE') ? insertTextRef : undefined} voiceInterimRange={voice.interimRange} />

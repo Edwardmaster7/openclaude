@@ -460,6 +460,53 @@ Humor: ${mood.emoji} "${mood.text}"${evolvedFrom}`,
     return null;
   }
 
+  if (baseCommand === "set") {
+    const companion = getCompanion();
+    if (!companion) {
+      onDone("Nenhum buddy ainda. Use /buddy para criar um.", { display: "system" });
+      return null;
+    }
+    const target = restArgs[0]?.toLowerCase();
+    if (!target) {
+      onDone(`Uso: /buddy set <form|random>\nFormas disponíveis: ${SPECIES.join(", ")}`, { display: "system" });
+      return null;
+    }
+    if (target === "random") {
+      saveGlobalConfig((current) => ({
+        ...current,
+        companion: current.companion
+          ? { ...current.companion, speciesOverride: undefined }
+          : current.companion,
+      }));
+      const currentCompanion = getCompanion()!;
+      onDone(
+        `${currentCompanion.name} voltou à sua forma original: ${titleCase(currentCompanion.rarity)} ${currentCompanion.species}.`,
+        { display: "system" },
+      );
+      return null;
+    }
+    if ((SPECIES as readonly string[]).includes(target)) {
+      saveGlobalConfig((current) => ({
+        ...current,
+        companion: current.companion
+          ? { ...current.companion, speciesOverride: target as any }
+          : current.companion,
+      }));
+      const currentCompanion = getCompanion()!;
+      setCompanionReaction(context, `${currentCompanion.name} mudou para a forma ${target}.`, true);
+      onDone(
+        `${currentCompanion.name} agora é um ${target}. Use '/buddy set random' para reverter.`,
+        { display: "system" },
+      );
+      return null;
+    }
+    onDone(
+      `Forma desconhecida '${target}'. Disponíveis: ${[...SPECIES, "random"].join(", ")}.`,
+      { display: "system" },
+    );
+    return null;
+  }
+
   if (baseCommand === "reroll") {
     const companion = getCompanion();
     if (!companion) {

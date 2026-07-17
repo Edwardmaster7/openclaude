@@ -4,7 +4,7 @@ import type { FeedbackDetectionResult } from "../hooks/feedbackHook.js";
 import { saveGlobalConfig, getGlobalConfig } from "../utils/config.js";
 import { getUserMessageText } from "../utils/messages.js";
 import { getCompanion } from "./companion.js";
-import { pickDeterministic } from "./hash.js";
+import { pickDeterministic } from "./deterministic.js";
 import { getLevelInfo } from "./progression.js";
 import { getErrorTip, getCodeReviewTip } from "./skills.js";
 import { checkKonamiCode, checkAnswer42 } from "./easter-eggs.js";
@@ -318,7 +318,6 @@ function checkQuests(
     }
   }
 }
-
 export async function fireCompanionObserver(
   messages: Message[],
   onReaction: (reaction: string | undefined) => void,
