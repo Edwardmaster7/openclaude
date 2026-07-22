@@ -28,6 +28,7 @@ import { stripBOM } from './jsonRead.js'
 import * as lockfile from './lockfile.js'
 import { logError } from './log.js'
 import type { MemoryType } from './memory/types.js'
+import type { CompanionShop } from '../buddy/types.js'
 import { normalizePathForConfigKey } from './path.js'
 import { getEssentialTrafficOnlyReason } from './privacyLevel.js'
 import { getManagedFilePath } from './settings/managedPath.js'
@@ -343,6 +344,46 @@ export type GlobalConfig = {
   // /buddy companion soul — bones regenerated from userId on read. See src/buddy/.
   companion?: import('../buddy/types.js').StoredCompanion
   companionMuted?: boolean
+  companionCompact?: boolean
+  companionLastPetDate?: string
+  companionLastActiveDate?: string
+  companionStreakCount?: number
+  companionLastStreakDate?: string
+  companionStats?: {
+    totalBashes: number
+    totalTasks: number
+    totalErrors: number
+    totalPets: number
+    totalReads: number
+    totalWrites: number
+    totalEdits: number
+    totalSearches: number
+    daysActive: number
+    totalTokensSaved: number
+    totalFeedbackRules: number
+    totalFeedbackConfirms: number
+    totalSessionMinutes: number
+  }
+  companionLastSessionTick?: number
+  companionLastAction?: Record<string, number>
+  companionReminders?: Array<{ text: string; at: number; createdAt: number }>
+  companionMemory?: Array<{ text: string; timestamp: number; trigger: string }>
+  companionOutfits?: string[]
+  companionActiveOutfit?: string
+  companionAchievements?: string[]
+  companionShop?: CompanionShop
+  companionXpLossLog?: {
+    totalLost: number
+    lastLossDate: string
+    dailyLossToday: number
+    dailyLossDate: string
+    solitarioCount: number
+    lossesThisSession: number
+  }
+  companionQuests?: {
+    date: string
+    completed: Record<string, boolean>
+  }
 
   // Feedback survey tracking
   feedbackSurveyState?: {
@@ -618,6 +659,9 @@ export type GlobalConfig = {
   // PR status footer configuration (feature-flagged via GrowthBook)
   prStatusFooterEnabled?: boolean // Show PR review status in footer (default: true)
 
+  // Tool failure loop guard configuration
+  toolFailureLoopThreshold?: number // Number of times a tool can fail before blocking (default: 3, 0 disables)
+
   // Built-in status bar shown when no custom statusLine command is configured (default: true)
   defaultStatusLineEnabled?: boolean
 
@@ -697,6 +741,11 @@ export type GlobalConfig = {
   // Use a different (e.g. cheaper/faster) model for compaction.
   // Defaults to mainLoopModel when unset.
   compactModel?: string
+
+  // Gemini context caching configuration parameters
+  geminiContextCachingEnabled?: boolean
+  geminiContextCachingTtl?: number
+  geminiContextCachingThreshold?: number
 }
 
 /**
@@ -748,6 +797,9 @@ function createDefaultGlobalConfig(): GlobalConfig {
     providerProfiles: [],
     openaiAdditionalModelOptionsCacheByProfile: {},
     knowledgeGraphEnabled: true,
+    geminiContextCachingEnabled: false,
+    geminiContextCachingTtl: 900,
+    geminiContextCachingThreshold: 0,
     // Omitted by default so callers can distinguish "unset" from an explicit
     // persisted "off"; normalizeMaxMessagesCompactionThreshold resolves an
     // unset value to the effective default of '200' (message-count compaction
@@ -801,6 +853,7 @@ export const GLOBAL_CONFIG_KEYS = [
   'flickerFreeMode',
   'permissionExplainerEnabled',
   'prStatusFooterEnabled',
+  'toolFailureLoopThreshold',
   'defaultStatusLineEnabled',
   'remoteControlAtStartup',
   'remoteDialogSeen',
@@ -808,6 +861,9 @@ export const GLOBAL_CONFIG_KEYS = [
   'logoColor',
   'maxMessagesCompactionThreshold',
   'compactModel',
+  'geminiContextCachingEnabled',
+  'geminiContextCachingTtl',
+  'geminiContextCachingThreshold',
 ] as const
 
 export type GlobalConfigKey = (typeof GLOBAL_CONFIG_KEYS)[number]
@@ -2217,4 +2273,9 @@ export function _setGlobalConfigCacheForTesting(
 ): void {
   globalConfigCache.config = config
   globalConfigCache.mtime = config ? Date.now() : 0
+  if (config) {
+    testGlobalConfigForTesting = config
+  } else {
+    testGlobalConfigForTesting = undefined
+  }
 }

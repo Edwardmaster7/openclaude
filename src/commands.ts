@@ -169,7 +169,6 @@ import sandboxToggle from './commands/sandbox-toggle/index.js'
 import chrome from './commands/chrome/index.js'
 import stickers from './commands/stickers/index.js'
 import advisor from './commands/advisor.js'
-import ads from './commands/ads.js'
 import smartroute from './commands/smartroute/index.js'
 import { logError } from './utils/log.js'
 import { toError } from './utils/errors.js'
@@ -282,7 +281,6 @@ const COMMANDS = memoize((): Command[] => [
   addDir,
   ads,
   advisor,
-  ads,
   smartroute,
   agents,
   autoFix,
@@ -385,7 +383,8 @@ const COMMANDS = memoize((): Command[] => [
   hooks,
   exportCommand,
   sandboxToggle,
-  ...(!isUsing3PServices() ? [logout, login()].filter(Boolean) : []),
+  logout,
+  login(),
   passes,
   ...(peersCmd ? [peersCmd] : []),
   tasks,
@@ -537,7 +536,10 @@ export async function getCommands(cwd: string): Promise<Command[]> {
 
   // Build base commands without dynamic skills
   const baseCommands = allCommands.filter(
-    _ => meetsAvailabilityRequirement(_) && isCommandEnabled(_),
+    _ =>
+      meetsAvailabilityRequirement(_) &&
+      isCommandEnabled(_) &&
+      (!['login', 'logout'].includes(_?.name) || !isUsing3PServices()),
   )
 
   if (dynamicSkills.length === 0) {

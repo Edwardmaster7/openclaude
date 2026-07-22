@@ -274,11 +274,9 @@ const WebBrowserPanelModule = feature('WEB_BROWSER_TOOL') ? require('../tools/We
 import { IssueFlagBanner } from '../components/PromptInput/IssueFlagBanner.js';
 import { useIssueFlagBanner } from '../hooks/useIssueFlagBanner.js';
 import { CompanionSprite, CompanionFloatingBubble, MIN_COLS_FOR_FULL_SPRITE } from '../buddy/CompanionSprite.js';
-import { CompanionActionFX } from '../buddy/CompanionActionFX.js';
 import { isBuddyEnabled } from '../buddy/feature.js';
 import { fireCompanionObserver } from '../buddy/observer.js';
 import { getLastDetectedFeedback, clearLastDetectedFeedback } from '../hooks/feedbackHook.js';
-import { DevBar } from '../components/DevBar.js';
 // Session manager removed - using AppState now
 import type { RemoteSessionConfig } from '../remote/RemoteSessionManager.js';
 import { REMOTE_SAFE_COMMANDS } from '../commands.js';
@@ -5235,7 +5233,6 @@ export function REPL({
             {/* Frustration-triggered transcript sharing prompt */}
             {frustrationDetection.state !== 'closed' && <FeedbackSurvey state={frustrationDetection.state} lastResponse={null} handleSelect={() => { }} handleTranscriptSelect={frustrationDetection.handleTranscriptSelect} inputValue={inputValue} setInputValue={setInputValue} />}
             {showIssueFlagBanner && <IssueFlagBanner />}
-            {isBuddyEnabled() && companionVisible && !companionNarrow && <CompanionActionFX />}
             <PromptInput debug={debug} ideSelection={ideSelection} isLocalJSXCommandActive={isShowingLocalJSXCommand} getToolUseContext={getToolUseContext} toolPermissionContext={toolPermissionContext} setToolPermissionContext={setToolPermissionContext} apiKeyStatus={apiKeyStatus} commands={renderCommands} agents={agentDefinitions.activeAgents} isLoading={isLoading} onExit={handleExit} verbose={verbose} messages={messages} onAutoUpdaterResult={setAutoUpdaterResult} autoUpdaterResult={autoUpdaterResult} input={inputValue} onInputChange={setInputValue} mode={inputMode} onModeChange={setInputMode} stashedPrompt={stashedPrompt} setStashedPrompt={setStashedPrompt} submitCount={submitCount} onShowMessageSelector={handleShowMessageSelector} onMessageActionsEnter={
               // Works during isLoading — edit cancels first; uuid selection survives appends.
               feature('MESSAGE_ACTIONS') && isFullscreenEnvEnabled() && !disableMessageActions ? enterMessageActions : undefined} mcpClients={mcpClients} pastedContents={pastedContents} setPastedContents={setPastedContents} vimMode={vimMode} setVimMode={setVimMode} showBashesDialog={showBashesDialog} setShowBashesDialog={setShowBashesDialog} onSubmit={onSubmit} onAgentSubmit={onAgentSubmit} isSearchingHistory={isSearchingHistory} setIsSearchingHistory={setIsSearchingHistory} helpOpen={isHelpOpen} setHelpOpen={setIsHelpOpen} insertTextRef={feature('VOICE_MODE') ? insertTextRef : undefined} voiceInterimRange={voice.interimRange} />

@@ -1,4 +1,8 @@
 import { randomBytes } from 'crypto'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { join } from 'path'
+import { getSettingsForSource, updateSettingsForSource } from './settings/settings.js'
+import { getClaudeConfigHomeDir } from './envUtils.js'
 import {
   getAdditionalModelOptionsCacheScope,
   isCodexAlias,
@@ -90,6 +94,70 @@ export type ProviderPresetDefaults = Omit<ProviderProfileInput, 'provider'> & {
 
 const PROFILE_ENV_APPLIED_FLAG = 'CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED'
 const PROFILE_ENV_APPLIED_ID = 'CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED_ID'
+
+export function getTerminalSessionId(): string {
+  const envSessionId =
+    process.env.TERM_SESSION_ID ||
+    process.env.WT_SESSION ||
+    process.env.GNOME_TERMINAL_SCREEN ||
+    process.env.TMUX ||
+    process.env.WINDOWID ||
+    process.env.SSH_TTY;
+  if (envSessionId) {
+    return envSessionId.replace(/[^a-zA-Z0-9_\-]/g, '_');
+  }
+  return `ppid-${process.ppid}`;
+}
+
+export function getSessionLocalActiveProfileId(): string | undefined {
+  const userSettings = getSettingsForSource('userSettings');
+  if (!userSettings?.isolateProviderSessions) {
+    return undefined;
+  }
+
+  const sessionId = getTerminalSessionId();
+  const filePath = join(getClaudeConfigHomeDir(), 'sessions', `${sessionId}.json`);
+  if (!existsSync(filePath)) {
+    return undefined;
+  }
+
+  try {
+    const content = readFileSync(filePath, 'utf8');
+    const data = JSON.parse(content);
+    return data.activeProviderProfileId;
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveSessionLocalActiveProfileId(profileId: string): void {
+  const userSettings = getSettingsForSource('userSettings');
+  if (!userSettings?.isolateProviderSessions) {
+    return;
+  }
+
+  const sessionId = getTerminalSessionId();
+  const sessionDir = join(getClaudeConfigHomeDir(), 'sessions');
+  try {
+    mkdirSync(sessionDir, { recursive: true });
+    const filePath = join(sessionDir, `${sessionId}.json`);
+    writeFileSync(filePath, JSON.stringify({ activeProviderProfileId: profileId }, null, 2), 'utf8');
+  } catch (error) {
+    // Ignore
+  }
+}
+
+export function deleteSessionLocalActiveProfileId(): void {
+  const sessionId = getTerminalSessionId();
+  const filePath = join(getClaudeConfigHomeDir(), 'sessions', `${sessionId}.json`);
+  if (existsSync(filePath)) {
+    try {
+      rmSync(filePath, { force: true });
+    } catch {
+      // Ignore
+    }
+  }
+}
 
 type ProfileCompatibilityMode =
   | 'anthropic'
@@ -838,12 +906,42 @@ export function getActiveProviderProfile(
     return undefined
   }
 
-  const activeId = trimOrUndefined(config.activeProviderProfileId)
+  const userSettings = getSettingsForSource('userSettings')
+  if (userSettings?.isolateProviderSessions) {
+    const sessionActiveId = getSessionLocalActiveProfileId()
+    if (sessionActiveId) {
+      if (sessionActiveId === ANTHROPIC_DEFAULT_PROFILE_ID) {
+        return undefined
+      }
+      const profile = profiles.find(p => p.id === sessionActiveId)
+      if (profile) return profile
+    }
+  }
+
+  const localSettings = getSettingsForSource('localSettings')
+  const projectSettings = getSettingsForSource('projectSettings')
+
+  const settingsActiveId =
+    localSettings?.activeProviderProfileId ||
+    projectSettings?.activeProviderProfileId ||
+    userSettings?.activeProviderProfileId
+
+  const activeId = trimOrUndefined(settingsActiveId || config.activeProviderProfileId)
   // Explicit Anthropic selection: do not fall back to the first saved profile.
   if (activeId === ANTHROPIC_DEFAULT_PROFILE_ID) {
+    if (userSettings?.isolateProviderSessions) {
+      saveSessionLocalActiveProfileId(ANTHROPIC_DEFAULT_PROFILE_ID)
+    }
     return undefined
   }
-  return profiles.find(profile => profile.id === activeId) ?? profiles[0]
+
+  const defaultProfile = profiles.find(profile => profile.id === activeId) ?? profiles[0]
+
+  if (userSettings?.isolateProviderSessions && defaultProfile) {
+    saveSessionLocalActiveProfileId(defaultProfile.id)
+  }
+
+  return defaultProfile
 }
 
 /**
@@ -863,6 +961,14 @@ export function clearActiveProviderProfile(
     activeProviderProfileId: ANTHROPIC_DEFAULT_PROFILE_ID,
     openaiAdditionalModelOptionsCache: [],
   }))
+
+  updateSettingsForSource('userSettings', { activeProviderProfileId: undefined })
+  updateSettingsForSource('localSettings', { activeProviderProfileId: undefined })
+
+  const userSettings = getSettingsForSource('userSettings')
+  if (userSettings?.isolateProviderSessions) {
+    saveSessionLocalActiveProfileId(ANTHROPIC_DEFAULT_PROFILE_ID)
+  }
 
   clearProviderProfileEnvFromProcessEnv()
   deleteProfileFile(options)
@@ -1700,6 +1806,20 @@ export function setActiveProviderProfile(
     },
   }))
 
+  const userSettings = getSettingsForSource('userSettings')
+  const saveScope = userSettings?.defaultProviderSaveScope ?? 'global'
+  if (saveScope === 'project') {
+    updateSettingsForSource('localSettings', { activeProviderProfileId: profileId })
+    updateSettingsForSource('userSettings', { activeProviderProfileId: undefined })
+  } else {
+    updateSettingsForSource('userSettings', { activeProviderProfileId: profileId })
+    updateSettingsForSource('localSettings', { activeProviderProfileId: undefined })
+  }
+
+  if (userSettings?.isolateProviderSessions) {
+    saveSessionLocalActiveProfileId(profileId)
+  }
+
   applyProviderProfileToProcessEnv(activeProfile)
   triggerStartupDiscoveryRefreshForProfile(activeProfile)
 
@@ -1790,6 +1910,28 @@ export function deleteProviderProfile(profileId: string): {
       clearProviderProfileEnvFromProcessEnv()
     }
     deleteProfileFile()
+  }
+
+  const userSettings = getSettingsForSource('userSettings')
+  const localSettings = getSettingsForSource('localSettings')
+  const nextActiveId = nextActiveProfile?.id
+
+  if (userSettings?.activeProviderProfileId === profileId) {
+    updateSettingsForSource('userSettings', { activeProviderProfileId: nextActiveId })
+  }
+  if (localSettings?.activeProviderProfileId === profileId) {
+    updateSettingsForSource('localSettings', { activeProviderProfileId: nextActiveId })
+  }
+
+  if (userSettings?.isolateProviderSessions) {
+    const sessionActiveId = getSessionLocalActiveProfileId()
+    if (sessionActiveId === profileId) {
+      if (nextActiveId) {
+        saveSessionLocalActiveProfileId(nextActiveId)
+      } else {
+        deleteSessionLocalActiveProfileId()
+      }
+    }
   }
 
   return {
