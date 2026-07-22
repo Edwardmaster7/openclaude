@@ -38,6 +38,8 @@ function gemmaModel(id: string, label: string, contextWindow: number, maxOutputT
 }
 
 export default [
+  geminiModel('gemini-3.6-flash', 'Gemini 3.6 Flash', 65_536),
+  geminiModel('google/gemini-3.6-flash', 'Google Gemini 3.6 Flash', 65_536),
   geminiModel('gemini-3.5-flash', 'Gemini 3.5 Flash', 65_536),
   geminiModel('google/gemini-3.5-flash', 'Google Gemini 3.5 Flash', 65_536),
   geminiModel('gemini-3.1-flash-lite-preview', 'Gemini 3.1 Flash Lite Preview', 65_536),
@@ -47,7 +49,6 @@ export default [
   geminiModel('gemini-2.5-flash', 'Gemini 2.5 Flash', 65_536),
   geminiModel('gemini-2.5-pro', 'Gemini 2.5 Pro', 65_536),
   geminiModel('gemini-2.0-flash', 'Gemini 2.0 Flash', 8_192),
-  geminiModel('gemini-3.5-flash', 'Gemini 3.5 Flash', 65_536),
   geminiModel('google/gemini-3.1-pro-preview', 'Google Gemini 3.1 Pro Preview', 64_000),
   geminiModel('google/gemini-3.1-flash-lite', 'Google Gemini 3.1 Flash Lite', 65_536),
   geminiModel('google/gemini-2.5-pro', 'Google Gemini 2.5 Pro', 65_536),
