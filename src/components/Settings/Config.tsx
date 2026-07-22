@@ -1053,6 +1053,48 @@ export function Config({
       });
     }
   }, {
+    id: 'replMaxTurns',
+    label: 'Max turns in REPL (CLI)',
+    value: (globalConfig.replMaxTurns ?? 50).toString(),
+    options: ['10', '20', '50', '100', '200', '500'],
+    type: 'enum' as const,
+    onChange(val: string) {
+      const parsed = parseInt(val, 10);
+      const limit = isNaN(parsed) ? undefined : parsed;
+      saveGlobalConfig(current => {
+        if (current.replMaxTurns === limit) return current;
+        return {
+          ...current,
+          replMaxTurns: limit
+        };
+      });
+      setGlobalConfig({
+        ...getGlobalConfig(),
+        replMaxTurns: limit
+      });
+    }
+  }, {
+    id: 'forkMaxTurns',
+    label: 'Max turns in background agents (Forks)',
+    value: (globalConfig.forkMaxTurns ?? 200).toString(),
+    options: ['50', '100', '200', '500', '1000'],
+    type: 'enum' as const,
+    onChange(val: string) {
+      const parsed = parseInt(val, 10);
+      const limit = isNaN(parsed) ? undefined : parsed;
+      saveGlobalConfig(current => {
+        if (current.forkMaxTurns === limit) return current;
+        return {
+          ...current,
+          forkMaxTurns: limit
+        };
+      });
+      setGlobalConfig({
+        ...getGlobalConfig(),
+        forkMaxTurns: limit
+      });
+    }
+  }, {
     id: 'prStatusFooterEnabled',
     label: 'Show PR status footer',
     value: globalConfig.prStatusFooterEnabled ?? true,
@@ -1447,6 +1489,12 @@ export function Config({
     }
     if (settingsData?.autoUpdatesChannel !== initialSettingsData.current?.autoUpdatesChannel) {
       formattedChanges.push(`Set auto-update channel to ${chalk.bold(settingsData?.autoUpdatesChannel ?? 'latest')}`);
+    }
+    if (globalConfig.replMaxTurns !== initialConfig.current.replMaxTurns) {
+      formattedChanges.push(`Set max turns in REPL (CLI) to ${chalk.bold(globalConfig.replMaxTurns ?? '50')}`);
+    }
+    if (globalConfig.forkMaxTurns !== initialConfig.current.forkMaxTurns) {
+      formattedChanges.push(`Set max turns in background agents to ${chalk.bold(globalConfig.forkMaxTurns ?? '200')}`);
     }
     if (formattedChanges.length > 0) {
       onClose(formattedChanges.join('\n'));

@@ -746,6 +746,9 @@ export type GlobalConfig = {
   geminiContextCachingEnabled?: boolean
   geminiContextCachingTtl?: number
   geminiContextCachingThreshold?: number
+
+  replMaxTurns?: number
+  forkMaxTurns?: number
 }
 
 /**
@@ -800,6 +803,8 @@ function createDefaultGlobalConfig(): GlobalConfig {
     geminiContextCachingEnabled: false,
     geminiContextCachingTtl: 900,
     geminiContextCachingThreshold: 0,
+    replMaxTurns: 50,
+    forkMaxTurns: 200,
     // Omitted by default so callers can distinguish "unset" from an explicit
     // persisted "off"; normalizeMaxMessagesCompactionThreshold resolves an
     // unset value to the effective default of '200' (message-count compaction
@@ -864,6 +869,8 @@ export const GLOBAL_CONFIG_KEYS = [
   'geminiContextCachingEnabled',
   'geminiContextCachingTtl',
   'geminiContextCachingThreshold',
+  'replMaxTurns',
+  'forkMaxTurns',
 ] as const
 
 export type GlobalConfigKey = (typeof GLOBAL_CONFIG_KEYS)[number]

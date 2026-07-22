@@ -13,6 +13,7 @@ import type { QuerySource } from '../../constants/querySource.js'
 import { getSystemContext, getUserContext } from '../../context.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import { query } from '../../query.js'
+import { getGlobalConfig } from '../../utils/config.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
 import { getDumpPromptsPath } from '../../services/api/dumpPrompts.js'
 import { cleanupAgentTracking } from '../../services/api/promptCacheBreakDetection.js'
@@ -795,7 +796,7 @@ export async function* runAgent({
       canUseTool,
       toolUseContext: agentToolUseContext,
       querySource,
-      maxTurns: maxTurns ?? agentDefinition.maxTurns,
+      maxTurns: maxTurns ?? (agentDefinition.agentType === 'fork' ? getGlobalConfig().forkMaxTurns ?? agentDefinition.maxTurns : agentDefinition.maxTurns),
     })) {
       onQueryProgress?.()
       // Forward subagent API request starts to parent's metrics display
