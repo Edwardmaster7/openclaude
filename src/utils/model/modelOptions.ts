@@ -764,30 +764,9 @@ function getModelOptionsBase(fastMode = false): ModelOption[] {
  * by `/model`, but in one step. See issue #1119.
  */
 export function getInactiveProviderProfileOptions(
-  activeProfileId: string | undefined,
+  _activeProfileId: string | undefined,
 ): ModelOption[] {
-  const profiles = getProviderProfiles()
-  const options: ModelOption[] = []
-  for (const profile of profiles) {
-    if (profile.id === activeProfileId) {
-      continue
-    }
-    const baseOptions = getProfileModelOptions(profile)
-    for (const baseOption of baseOptions) {
-      const modelValue =
-        typeof baseOption.value === 'string' ? baseOption.value : ''
-      if (!modelValue) {
-        continue
-      }
-      options.push({
-        value: encodeSwitchProfileValue(profile.id, modelValue),
-        label: `${modelValue} · ${profile.name}`,
-        description: `Switch to ${profile.name} (${profile.baseUrl})`,
-        switchToProfileId: profile.id,
-      })
-    }
-  }
-  return options
+  return []
 }
 
 // @[MODEL LAUNCH]: Add the new model ID to the appropriate family pattern below
