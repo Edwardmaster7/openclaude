@@ -99,7 +99,6 @@ import { AutoModeOptInDialog } from '../AutoModeOptInDialog.js';
 import { BridgeDialog } from '../BridgeDialog.js';
 import { ConfigurableShortcutHint } from '../ConfigurableShortcutHint.js';
 import { getVisibleAgentTasks, useCoordinatorTaskCount } from '../CoordinatorAgentStatus.js';
-import { getEffortNotificationText } from '../EffortIndicator.js';
 import { getFastIconString } from '../FastIcon.js';
 import { GlobalSearchDialog } from '../GlobalSearchDialog.js';
 import { HistorySearchDialog } from '../HistorySearchDialog.js';
@@ -112,6 +111,7 @@ import { BackgroundTasksDialog } from '../tasks/BackgroundTasksDialog.js';
 import { countVisibleBackgroundTasks, shouldHideTasksFooter } from '../tasks/taskStatusUtils.js';
 import { TeamsDialog } from '../teams/TeamsDialog.js';
 import VimTextInput from '../VimTextInput.js';
+import { applyHistorySearchActiveState } from './footerVisibility.js';
 import { detectModeEntry, getModeFromInput, getValueFromInput } from './inputModes.js';
 import { FOOTER_TEMPORARY_STATUS_TIMEOUT, Notifications } from './Notifications.js';
 import PromptInputFooter from './PromptInputFooter.js';
@@ -238,7 +238,6 @@ function PromptInput({
   voiceInterimRange
 }: Props): React.ReactNode {
   const mainLoopModel = useMainLoopModel();
-  const { trackActivity } = useBuddyNotification();
   // A local-jsx command (e.g., /mcp while agent is running) renders a full-
   // screen dialog on top of PromptInput via the immediate-command path with
   // shouldHidePromptInput: false. Those dialogs don't register in the overlay
@@ -337,7 +336,6 @@ function PromptInput({
   const mainLoopModelForSession = useAppState(s => s.mainLoopModelForSession);
   const thinkingEnabled = useAppState(s => s.thinkingEnabled);
   const isFastMode = useAppState(s => isFastModeEnabled() ? s.fastMode : false);
-  const effortValue = useAppState(s => s.effortValue);
   const viewedTeammate = getViewedTeammateTask(store.getState());
   const viewingAgentName = viewedTeammate?.identity.agentName;
   // identity.color is typed as `string | undefined` (not AgentColorName) because
@@ -360,6 +358,9 @@ function PromptInput({
     }
     return toolPermissionContext;
   }, [viewedTeammate, toolPermissionContext]);
+  const setHistorySearchActive = useCallback((active: boolean) => {
+    applyHistorySearchActiveState(active, setHelpOpen, setIsSearchingHistory);
+  }, [setHelpOpen, setIsSearchingHistory]);
   const {
     historyQuery,
     setHistoryQuery,
@@ -368,7 +369,7 @@ function PromptInput({
   } = useHistorySearch(entry => {
     setPastedContents(entry.pastedContents);
     void onSubmit(entry.display);
-  }, input, trackAndSetInput, setCursorOffset, cursorOffset, onModeChange, mode, isSearchingHistory, setIsSearchingHistory, setPastedContents, pastedContents);
+  }, input, trackAndSetInput, setCursorOffset, cursorOffset, onModeChange, mode, isSearchingHistory, setHistorySearchActive, setPastedContents, pastedContents);
   // Counter for paste IDs (shared between images and text).
   // Compute initial value once from existing messages (for --continue/--resume).
   // useRef(fn()) evaluates fn() on every render and discards the result after
@@ -993,7 +994,6 @@ function PromptInput({
     setSuggestionsStateRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
   }, []);
   const onSubmit = useCallback(async (inputParam: string, isSubmittingSlashCommand = false, slashCommandOverride?: Command) => {
-    trackActivity();
     inputParam = inputParam.trimEnd();
 
     // Don't submit if a footer indicator is being opened. Read fresh from
@@ -1116,7 +1116,7 @@ function PromptInput({
     }, undefined, slashCommandOverride ? {
       slashCommandOverride
     } : undefined);
-  }, [promptSuggestionState, speculation, speculationSessionTimeSavedMs, teamContext, store, footerItems, suggestionsState.suggestions, onSubmitProp, onAgentSubmit, clearBuffer, resetHistory, logOutcomeAtSubmission, setAppState, markAccepted, pastedContents, removeNotification, trackActivity]);
+  }, [promptSuggestionState, speculation, speculationSessionTimeSavedMs, teamContext, store, footerItems, suggestionsState.suggestions, onSubmitProp, onAgentSubmit, clearBuffer, resetHistory, logOutcomeAtSubmission, setAppState, markAccepted, pastedContents, removeNotification]);
   const {
     suggestions,
     selectedSuggestion,
@@ -2015,23 +2015,7 @@ function PromptInput({
   const showFastIcon = isFastModeEnabled() ? isFastMode && (isFastModeAvailable() || fastModeCooldown) : false;
   const showFastIconHint = useShowFastIconHint(showFastIcon ?? false);
 
-  // Show effort notification on startup and when effort changes.
-  // Suppressed in brief/assistant mode — the value reflects the local
-  // client's effort, not the connected agent's.
-  const effortNotificationText = briefOwnsGap ? undefined : getEffortNotificationText(effortValue, mainLoopModel);
-  useEffect(() => {
-    if (!effortNotificationText) {
-      removeNotification('effort-level');
-      return;
-    }
-    addNotification({
-      key: 'effort-level',
-      text: effortNotificationText,
-      priority: 'high',
-      timeoutMs: 12_000,
-      fold: (_, incoming) => incoming
-    });
-  }, [effortNotificationText, addNotification, removeNotification]);
+  useBuddyNotification();
   const companionSpeaking = isBuddyEnabled() ?
   useAppState(s => s.companionReaction !== undefined) : false;
   const {
@@ -2069,33 +2053,29 @@ function PromptInput({
   // Memoized callbacks for model picker to prevent re-renders when unrelated
   // state (like notifications) changes. This prevents the inline model picker
   // from visually "jumping" when notifications arrive.
-  const handleModelSelect = useCallback((model: string | null, effort: EffortLevel | undefined) => {
+  const handleModelSelect = useCallback((model: string | null, _effort: EffortLevel | undefined) => {
+    let wasFastModeDisabled = false;
     setAppState(prev => {
-      const isFast = model ? isFastModeSupportedByModel(model) && prev.fastMode : false;
-      const wasFastModeDisabled = isFastModeEnabled() && !isFastModeSupportedByModel(model) && !!prev.fastMode;
+      wasFastModeDisabled = isFastModeEnabled() && !isFastModeSupportedByModel(model) && !!prev.fastMode;
       return {
         ...prev,
         mainLoopModel: model,
-        mainLoopModelForSession: undefined,
-        effortValue: effort !== undefined ? toPersistableEffort(effort) : prev.effortValue,
-        fastMode: wasFastModeDisabled ? false : isFast
+        mainLoopModelForSession: null,
+        // Turn off fast mode if switching to a model that doesn't support it
+        ...(wasFastModeDisabled && {
+          fastMode: false
+        })
       };
     });
     setShowModelPicker(false);
-
-    // Calculate message for notification
-    const effectiveFastMode = isFastMode ?? false;
-    const modelSupportedFast = isFastModeSupportedByModel(model);
-    const wasFastDisabled = isFastModeEnabled() && !modelSupportedFast && effectiveFastMode;
-
+    const effectiveFastMode = (isFastMode ?? false) && !wasFastModeDisabled;
     let message = `Model set to ${modelDisplayString(model)}`;
     if (isBilledAsExtraUsage(model, effectiveFastMode, isOpus1mMergeEnabled())) {
       message += ' · Billed as extra usage';
     }
-    if (wasFastDisabled) {
+    if (wasFastModeDisabled) {
       message += ' · Fast mode OFF';
     }
-
     addNotification({
       key: 'model-switched',
       jsx: <Text>{message}</Text>,

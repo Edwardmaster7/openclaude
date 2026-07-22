@@ -29,32 +29,58 @@ export function formatFileSize(sizeInBytes: number): string {
  * Unlike formatDuration, always keeps the decimal — use for sub-minute timings
  * where the fractional second is meaningful (TTFT, hook durations, etc.).
  */
+/**
+ * Renders milliseconds as a one-decimal second value, rounding in integer
+ * milliseconds so half-steps are stable. Rounding the raw fraction with
+ * `(ms / 1000).toFixed(1)` is unstable because values like `0.95` aren't
+ * exactly representable in binary floating point (`950` would render `0.9`).
+ */
+function oneDecimalSeconds(ms: number): string {
+  return (Math.round(ms / 100) / 10).toFixed(1)
+}
+
 export function formatSecondsShort(ms: number): string {
-  return `${(ms / 1000).toFixed(1)}s`
+  return `${oneDecimalSeconds(ms)}s`
 }
 
 export function formatDuration(
   ms: number,
   options?: { hideTrailingZeros?: boolean; mostSignificantOnly?: boolean },
 ): string {
-  // Guard against negative values (clock drift, race conditions)
-  if (ms <= 0) {
-    return '0s'
-  }
-
-  if (ms < 60_000) {
-    // Sub-minute: show 1 decimal for < 10s, integer otherwise
-    const sec = ms / 1000
-    if (sec < 10) {
-      return `${sec.toFixed(1)}s`
+  if (ms < 60000) {
+    // Special case for 0
+    if (ms === 0) {
+      return '0s'
     }
-    return `${Math.floor(sec)}s`
+    // For durations < 1s, show 1 decimal place (e.g., 0.5s). The threshold is
+    // 1000ms (1s), not 1ms — at `ms < 1` this branch could only ever fire for
+    // sub-millisecond values and always returned "0.0s", so real sub-second
+    // durations fell through and rendered as "0s".
+    if (ms < 1000) {
+      return `${oneDecimalSeconds(ms)}s`
+    }
+    const s = Math.floor(ms / 1000).toString()
+    return `${s}s`
   }
 
   let days = Math.floor(ms / 86400000)
   let hours = Math.floor((ms % 86400000) / 3600000)
   let minutes = Math.floor((ms % 3600000) / 60000)
-  let seconds = Math.floor((ms % 60000) / 1000)
+  let seconds = Math.round((ms % 60000) / 1000)
+
+  // Handle rounding carry-over (e.g., 59.5s rounds to 60s)
+  if (seconds === 60) {
+    seconds = 0
+    minutes++
+  }
+  if (minutes === 60) {
+    minutes = 0
+    hours++
+  }
+  if (hours === 24) {
+    hours = 0
+    days++
+  }
 
   const hide = options?.hideTrailingZeros
 
@@ -120,6 +146,14 @@ export function formatNumber(number: number): string {
 
 export function formatTokens(count: number): string {
   return formatNumber(count).replace('.0', '')
+}
+
+/** Formats a token count as integer — no decimal fraction, uppercase K/M prefix. Always en-US locale. */
+export function formatTokenCount(count: number): string {
+  return new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 0,
+  }).format(count)
 }
 
 type RelativeTimeStyle = 'long' | 'short' | 'narrow'

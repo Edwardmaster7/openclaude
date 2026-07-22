@@ -1,11 +1,9 @@
 import { randomBytes } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
-import { join } from 'path'
-import { getSettingsForSource, updateSettingsForSource } from './settings/settings.js'
-import { getClaudeConfigHomeDir } from './envUtils.js'
 import {
   getAdditionalModelOptionsCacheScope,
+  isCodexAlias,
   isCodexBaseUrl,
+  isCodexEligibleGpt5Model,
   parseOpenAICompatibleApiFormat,
 } from '../services/api/providerConfig.js'
 import {
@@ -32,12 +30,15 @@ import {
   buildAtlasCloudProfileEnv,
   buildVertexProfileEnv,
   clearManagedProfileEnv,
+  deleteProfileFile,
   type ProfileFileLocation,
   type ProfileEnv,
   type ProviderProfile as ProviderProfileStartup,
 } from './providerProfile.js'
+import { isCanonicalAimlapiInferenceBaseUrl } from '../integrations/aimlapi/config.js'
 import { refreshStartupDiscoveryForRoute } from '../integrations/discoveryService.js'
 import {
+  getCatalogEntriesForRoute,
   getProviderPresetUiMetadata,
   normalizeXiaomiMimoBaseUrl,
   routeSupportsApiFormatSelection,
@@ -48,12 +49,22 @@ import {
   type ResolvedProfileRoute,
   type ProviderPreset,
 } from '../integrations/index.js'
-import { isFireworksBaseUrl, isNearaiBaseUrl, isXaiBaseUrl, resolveEnvOnlyProviderRouteId } from '../integrations/routeMetadata.js'
+import {
+  isCloudflareBaseUrl,
+  isClinePassBaseUrl,
+  isFireworksBaseUrl,
+  isLongcatBaseUrl,
+  isNearaiBaseUrl,
+  isXaiBaseUrl,
+  isXiaomiMimoBaseUrl,
+  resolveEnvOnlyProviderRouteId,
+} from '../integrations/routeMetadata.js'
 import { logForDebugging } from './debug.js'
 import {
   sanitizeProfileCustomHeaders,
   serializeProfileCustomHeaders,
 } from './providerCustomHeaders.js'
+import { getSettings_DEPRECATED } from './settings/settings.js'
 
 export type { ProviderPreset } from '../integrations/index.js'
 
@@ -64,6 +75,7 @@ export type ProviderProfileInput = {
   model: string
   apiKey?: string
   apiFormat?: ProviderProfile['apiFormat']
+  azureStyle?: ProviderProfile['azureStyle']
   authHeader?: ProviderProfile['authHeader']
   authScheme?: ProviderProfile['authScheme']
   authHeaderValue?: ProviderProfile['authHeaderValue']
@@ -78,70 +90,6 @@ export type ProviderPresetDefaults = Omit<ProviderProfileInput, 'provider'> & {
 
 const PROFILE_ENV_APPLIED_FLAG = 'CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED'
 const PROFILE_ENV_APPLIED_ID = 'CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED_ID'
-
-export function getTerminalSessionId(): string {
-  const envSessionId =
-    process.env.TERM_SESSION_ID ||
-    process.env.WT_SESSION ||
-    process.env.GNOME_TERMINAL_SCREEN ||
-    process.env.TMUX ||
-    process.env.WINDOWID ||
-    process.env.SSH_TTY;
-  if (envSessionId) {
-    return envSessionId.replace(/[^a-zA-Z0-9_\-]/g, '_');
-  }
-  return `ppid-${process.ppid}`;
-}
-
-export function getSessionLocalActiveProfileId(): string | undefined {
-  const userSettings = getSettingsForSource('userSettings');
-  if (!userSettings?.isolateProviderSessions) {
-    return undefined;
-  }
-
-  const sessionId = getTerminalSessionId();
-  const filePath = join(getClaudeConfigHomeDir(), 'sessions', `${sessionId}.json`);
-  if (!existsSync(filePath)) {
-    return undefined;
-  }
-
-  try {
-    const content = readFileSync(filePath, 'utf8');
-    const data = JSON.parse(content);
-    return data.activeProviderProfileId;
-  } catch {
-    return undefined;
-  }
-}
-
-export function saveSessionLocalActiveProfileId(profileId: string): void {
-  const userSettings = getSettingsForSource('userSettings');
-  if (!userSettings?.isolateProviderSessions) {
-    return;
-  }
-
-  const sessionId = getTerminalSessionId();
-  const sessionDir = join(getClaudeConfigHomeDir(), 'sessions');
-  try {
-    mkdirSync(sessionDir, { recursive: true });
-    const filePath = join(sessionDir, `${sessionId}.json`);
-    writeFileSync(filePath, JSON.stringify({ activeProviderProfileId: profileId }, null, 2), 'utf8');
-  } catch (error) {
-    logForDebugging(`Failed to save session-local active profile: ${error}`);
-  }
-}
-
-export function deleteSessionLocalActiveProfileId(): void {
-  const sessionId = getTerminalSessionId();
-  const filePath = join(getClaudeConfigHomeDir(), 'sessions', `${sessionId}.json`);
-  if (existsSync(filePath)) {
-    try {
-      rmSync(filePath, { force: true });
-    } catch (error) {
-      logForDebugging(`Failed to delete session-local active profile file: ${error}`);
-    }
-  }
-}
 
 type ProfileCompatibilityMode =
   | 'anthropic'
@@ -194,6 +142,11 @@ function resolveProfileCompatibility(provider: string): {
   }
 
   return { route, compatibilityMode: 'openai' }
+}
+
+function isClinePassProfile(profile: ProviderProfile): boolean {
+  const { route } = resolveProfileCompatibility(profile.provider)
+  return route.routeId === 'clinepass' || isClinePassBaseUrl(profile.baseUrl)
 }
 
 function deriveGithubEnterpriseUrl(baseUrl: string | undefined): string | undefined {
@@ -264,10 +217,104 @@ function resolveProfileCapabilityRouteId(
   provider: string,
   baseUrl?: string,
 ): string {
+  const providerRouteId = resolveProfileRoute(provider).routeId
+  if (providerRouteId === 'custom-anthropic') {
+    return providerRouteId
+  }
+
+  const routeIdFromBaseUrl = resolveRouteIdFromBaseUrl(baseUrl)
+  if (routeIdFromBaseUrl) {
+    return routeIdFromBaseUrl
+  }
+
+  // Cloudflare and LongCat profiles retargeted away from their dedicated
+  // endpoints run generically at runtime. Mirror that boundary here so
+  // capability-driven surfaces are not stripped based on stale route ids.
+  if (
+    (providerRouteId === 'cloudflare' || providerRouteId === 'longcat') &&
+    baseUrl &&
+    !(providerRouteId === 'cloudflare'
+      ? isCloudflareBaseUrl(baseUrl)
+      : isLongcatBaseUrl(baseUrl))
+  ) {
+    return 'custom'
+  }
+
+  return providerRouteId
+}
+
+function normalizeProfileModelLookupKey(model: string | undefined): string {
+  // Strip a trailing [1m] tag along with any ?query suffix: the tag is a
+  // client-side context opt-in, not part of the model's identity, so a saved
+  // `codexplan[1m]` must still match a profile/catalog entry of `codexplan`.
   return (
-    resolveRouteIdFromBaseUrl(baseUrl) ??
-    resolveProfileRoute(provider).routeId
+    model?.trim().split('?', 1)[0]?.trim().toLowerCase().replace(/\[1m]$/, '') ??
+    ''
   )
+}
+
+function profileSupportsModel(profile: ProviderProfile, model: string): boolean {
+  const normalizedModel = normalizeProfileModelLookupKey(model)
+  if (!normalizedModel) {
+    return false
+  }
+
+  if (
+    parseModelList(profile.model).some(
+      configured => normalizeProfileModelLookupKey(configured) === normalizedModel,
+    )
+  ) {
+    return true
+  }
+
+  // Codex-backend profiles (ChatGPT OAuth) are created with a single
+  // `codexplan` entry, but the backend accepts every Codex alias model and
+  // the wider gpt-5.x family (free-text /model picks like `gpt-5.1-codex`
+  // pass live validation before being persisted). Without this, a saved
+  // pick like `gpt-5.6-terra` is rejected here at the next startup, so the
+  // profile's default silently wins and the choice appears to not stick.
+  // Deliberately NOT a blanket allow: a stale non-GPT model saved under a
+  // different provider (e.g. `kimi-k2.6`) — or an API-only gpt-5-mini/-nano
+  // tier the Codex backend does not serve — must still fall back to the
+  // profile default rather than 400 against the Codex backend. The gate is
+  // authoritative for Codex profiles: falling through to the catalog check
+  // would consult the `openai` route catalog (the profile's provider is
+  // 'openai'), which describes api.openai.com's model set, not the ChatGPT
+  // Codex backend's.
+  if (isCodexBaseUrl(profile.baseUrl)) {
+    return (
+      isCodexAlias(normalizedModel) || isCodexEligibleGpt5Model(normalizedModel)
+    )
+  }
+
+  const routeId = resolveProfileCapabilityRouteId(profile.provider, profile.baseUrl)
+  return getCatalogEntriesForRoute(routeId).some(
+    entry =>
+      normalizeProfileModelLookupKey(entry.apiName) === normalizedModel ||
+      normalizeProfileModelLookupKey(entry.id) === normalizedModel ||
+      (entry.aliases ?? []).some(
+        alias => normalizeProfileModelLookupKey(alias) === normalizedModel,
+      ),
+  )
+}
+
+let savedModelOverrideForTesting: string | undefined
+
+export function _setSavedModelOverrideForTesting(model: string | undefined): void {
+  savedModelOverrideForTesting = model
+}
+
+function getSavedModelOverrideForProfile(
+  profile: ProviderProfile,
+): string | undefined {
+  const savedModel = trimOrUndefined(
+    savedModelOverrideForTesting ?? getSettings_DEPRECATED()?.model,
+  )
+  if (!savedModel || !profileSupportsModel(profile, savedModel)) {
+    return undefined
+  }
+
+  return savedModel
 }
 
 function sanitizeProfile(profile: ProviderProfile): ProviderProfile | null {
@@ -277,6 +324,7 @@ function sanitizeProfile(profile: ProviderProfile): ProviderProfile | null {
   const baseUrl = normalizeBaseUrl(profile.baseUrl)
   const model = trimValue(profile.model)
   const apiFormat = parseOpenAICompatibleApiFormat(profile.apiFormat)
+  const azureStyle = profile.azureStyle === true
   const authHeader = sanitizeAuthHeader(profile.authHeader)
   const authScheme = sanitizeAuthScheme(profile.authScheme)
   const authHeaderValue = trimOrUndefined(profile.authHeaderValue)
@@ -309,6 +357,9 @@ function sanitizeProfile(profile: ProviderProfile): ProviderProfile | null {
   }
   if (supportsApiFormat && apiFormat) {
     sanitized.apiFormat = apiFormat
+  }
+  if (azureStyle) {
+    sanitized.azureStyle = true
   }
   if (supportsAuthHeaders && authHeader) {
     sanitized.authHeader = authHeader
@@ -358,6 +409,7 @@ function toProfile(
     model: input.model,
     apiKey: input.apiKey,
     apiFormat: input.apiFormat,
+    azureStyle: input.azureStyle,
     authHeader: input.authHeader,
     authScheme: input.authScheme,
     authHeaderValue: input.authHeaderValue,
@@ -387,6 +439,16 @@ function applySupportedProfileCustomHeaders(
 ): ProfileEnv {
   const customHeaders = getSupportedProfileCustomHeadersEnv(profile)
   return customHeaders ? { ...env, ANTHROPIC_CUSTOM_HEADERS: customHeaders } : env
+}
+
+function buildAnthropicCredentialEnv(
+  provider: ProviderProfile['provider'],
+  apiKey: string | undefined,
+): ProfileEnv {
+  if (!apiKey) return {}
+  return provider === 'custom-anthropic'
+    ? { ANTHROPIC_AUTH_TOKEN: apiKey }
+    : { ANTHROPIC_API_KEY: apiKey }
 }
 
 function getModelCacheByProfile(
@@ -428,7 +490,7 @@ export function getProviderPresetDefaults(
   // Keep preset-pinned endpoints/models even when generic OpenAI env values
   // are present, but still read provider-specific credential env vars above.
   const routeDefaults =
-    preset === 'custom'
+    preset === 'custom' || preset === 'custom-anthropic'
       ? metadata
       : getProviderPresetUiMetadata(preset, {})
   return {
@@ -436,7 +498,13 @@ export function getProviderPresetDefaults(
     name: metadata.name,
     baseUrl: routeDefaults.baseUrl,
     model: routeDefaults.model,
-    apiKey: metadata.apiKey,
+    // The /provider custom Anthropic flow always saves a Bearer token. Keep
+    // direct ANTHROPIC_API_KEY/x-api-key setups out of that field so opening
+    // the preset cannot silently change their authentication scheme.
+    apiKey:
+      preset === 'custom-anthropic'
+        ? process.env.ANTHROPIC_AUTH_TOKEN?.trim() || undefined
+        : metadata.apiKey,
     requiresApiKey: metadata.requiresApiKey,
   }
 }
@@ -483,6 +551,14 @@ function hasCompleteProviderSelection(
   processEnv: NodeJS.ProcessEnv = process.env,
 ): boolean {
   if (resolveEnvOnlyProviderRouteId(processEnv) !== null) return true
+  if (
+    trimOrUndefined(processEnv.ANTHROPIC_BASE_URL) !== undefined &&
+    trimOrUndefined(processEnv.ANTHROPIC_MODEL) !== undefined &&
+    (trimOrUndefined(processEnv.ANTHROPIC_AUTH_TOKEN) !== undefined ||
+      trimOrUndefined(processEnv.ANTHROPIC_API_KEY) !== undefined)
+  ) {
+    return true
+  }
   if (!hasProviderSelectionFlags(processEnv)) return false
   if (processEnv.CLAUDE_CODE_USE_OPENAI !== undefined) {
     return (
@@ -554,9 +630,11 @@ function isProcessEnvAlignedWithProfile(
   profile: ProviderProfile,
   options?: {
     includeApiKey?: boolean
+    primaryModel?: string
   },
 ): boolean {
   const includeApiKey = options?.includeApiKey ?? true
+  const primaryModel = options?.primaryModel ?? getPrimaryModel(profile.model)
   const { compatibilityMode } = resolveProfileCompatibility(profile.provider)
 
   if (processEnv[PROFILE_ENV_APPLIED_FLAG] !== '1') {
@@ -571,9 +649,11 @@ function isProcessEnvAlignedWithProfile(
     return (
       !hasProviderSelectionFlags(processEnv) &&
       sameOptionalEnvValue(processEnv.ANTHROPIC_BASE_URL, profile.baseUrl) &&
-      sameOptionalEnvValue(processEnv.ANTHROPIC_MODEL, getPrimaryModel(profile.model)) &&
+      sameOptionalEnvValue(processEnv.ANTHROPIC_MODEL, primaryModel) &&
       (!includeApiKey ||
-        sameOptionalEnvValue(processEnv.ANTHROPIC_API_KEY, profile.apiKey))
+        (profile.provider === 'custom-anthropic'
+          ? sameOptionalEnvValue(processEnv.ANTHROPIC_AUTH_TOKEN, profile.apiKey)
+          : sameOptionalEnvValue(processEnv.ANTHROPIC_API_KEY, profile.apiKey)))
     )
   }
 
@@ -587,7 +667,7 @@ function isProcessEnvAlignedWithProfile(
       processEnv.CLAUDE_CODE_USE_VERTEX === undefined &&
       processEnv.CLAUDE_CODE_USE_FOUNDRY === undefined &&
       sameOptionalEnvValue(processEnv.MISTRAL_BASE_URL, profile.baseUrl) &&
-      sameOptionalEnvValue(processEnv.MISTRAL_MODEL, getPrimaryModel(profile.model)) &&
+      sameOptionalEnvValue(processEnv.MISTRAL_MODEL, primaryModel) &&
       (!includeApiKey ||
         sameOptionalEnvValue(processEnv.MISTRAL_API_KEY, profile.apiKey))
     )
@@ -603,7 +683,7 @@ function isProcessEnvAlignedWithProfile(
       processEnv.CLAUDE_CODE_USE_VERTEX === undefined &&
       processEnv.CLAUDE_CODE_USE_FOUNDRY === undefined &&
       sameOptionalEnvValue(processEnv.GEMINI_BASE_URL, profile.baseUrl) &&
-      sameOptionalEnvValue(processEnv.GEMINI_MODEL, getPrimaryModel(profile.model)) &&
+      sameOptionalEnvValue(processEnv.GEMINI_MODEL, primaryModel) &&
       (!includeApiKey ||
         sameOptionalEnvValue(processEnv.GEMINI_API_KEY, profile.apiKey))
     )
@@ -623,7 +703,7 @@ function isProcessEnvAlignedWithProfile(
       processEnv.CLAUDE_CODE_USE_VERTEX === undefined &&
       processEnv.CLAUDE_CODE_USE_FOUNDRY === undefined &&
       sameOptionalEnvValue(processEnv.OPENAI_BASE_URL, profile.baseUrl) &&
-      sameOptionalEnvValue(processEnv.OPENAI_MODEL, getPrimaryModel(profile.model)) &&
+      sameOptionalEnvValue(processEnv.OPENAI_MODEL, primaryModel) &&
       sameOptionalEnvValue(processEnv.GITHUB_ENTERPRISE_URL, expectedGheUrl) &&
       (profile.provider !== 'github-enterprise' ||
         !includeApiKey ||
@@ -640,7 +720,7 @@ function isProcessEnvAlignedWithProfile(
       processEnv.CLAUDE_CODE_USE_GITHUB === undefined &&
       processEnv.CLAUDE_CODE_USE_VERTEX === undefined &&
       processEnv.CLAUDE_CODE_USE_FOUNDRY === undefined &&
-      sameOptionalEnvValue(processEnv.ANTHROPIC_MODEL, getPrimaryModel(profile.model)) &&
+      sameOptionalEnvValue(processEnv.ANTHROPIC_MODEL, primaryModel) &&
       sameOptionalEnvValue(processEnv.ANTHROPIC_BEDROCK_BASE_URL, profile.baseUrl)
     )
   }
@@ -654,16 +734,19 @@ function isProcessEnvAlignedWithProfile(
       processEnv.CLAUDE_CODE_USE_GITHUB === undefined &&
       processEnv.CLAUDE_CODE_USE_BEDROCK === undefined &&
       processEnv.CLAUDE_CODE_USE_FOUNDRY === undefined &&
-      sameOptionalEnvValue(processEnv.ANTHROPIC_MODEL, getPrimaryModel(profile.model)) &&
+      sameOptionalEnvValue(processEnv.ANTHROPIC_MODEL, primaryModel) &&
       sameOptionalEnvValue(processEnv.ANTHROPIC_VERTEX_BASE_URL, profile.baseUrl)
     )
   }
 
   const expectedContextWindows = profile.maxContextLength
     ? JSON.stringify({
-        [getPrimaryModel(profile.model)]: profile.maxContextLength,
+        [primaryModel]: profile.maxContextLength,
       })
     : undefined
+  const isAimlapiRoute =
+    profile.provider === 'aimlapi' ||
+    resolveRouteIdFromBaseUrl(profile.baseUrl) === 'aimlapi'
 
   return (
     processEnv.CLAUDE_CODE_USE_OPENAI !== undefined &&
@@ -674,8 +757,12 @@ function isProcessEnvAlignedWithProfile(
     processEnv.CLAUDE_CODE_USE_VERTEX === undefined &&
     processEnv.CLAUDE_CODE_USE_FOUNDRY === undefined &&
     sameOptionalEnvValue(processEnv.OPENAI_BASE_URL, profile.baseUrl) &&
-    sameOptionalEnvValue(processEnv.OPENAI_MODEL, getPrimaryModel(profile.model)) &&
+    sameOptionalEnvValue(processEnv.OPENAI_MODEL, primaryModel) &&
     sameOptionalEnvValue(processEnv.OPENAI_API_FORMAT, profile.apiFormat) &&
+    sameOptionalEnvValue(
+      processEnv.OPENAI_AZURE_STYLE,
+      profile.azureStyle ? '1' : undefined,
+    ) &&
     sameOptionalEnvValue(processEnv.OPENAI_AUTH_HEADER, profile.authHeader) &&
     sameOptionalEnvValue(processEnv.OPENAI_AUTH_SCHEME, profile.authScheme) &&
     sameOptionalEnvValue(processEnv.OPENAI_AUTH_HEADER_VALUE, profile.authHeaderValue) &&
@@ -693,6 +780,10 @@ function isProcessEnvAlignedWithProfile(
       ? !includeApiKey ||
         sameOptionalEnvValue(processEnv.XAI_API_KEY, profile.apiKey)
       : true) &&
+    (isAimlapiRoute
+      ? !includeApiKey ||
+        sameOptionalEnvValue(processEnv.AIMLAPI_API_KEY, profile.apiKey)
+      : true) &&
     (profile.baseUrl?.toLowerCase().includes('api.venice.ai')
       ? !includeApiKey ||
         sameOptionalEnvValue(processEnv.VENICE_API_KEY, profile.apiKey)
@@ -706,6 +797,10 @@ function isProcessEnvAlignedWithProfile(
       ? !includeApiKey ||
         sameOptionalEnvValue(processEnv.ATLAS_CLOUD_API_KEY, profile.apiKey)
       : true) &&
+    (isClinePassProfile(profile)
+      ? !includeApiKey ||
+        sameOptionalEnvValue(processEnv.CLINE_API_KEY, profile.apiKey)
+      : true) &&
     (isNearaiBaseUrl(profile.baseUrl)
       ? !includeApiKey ||
         sameOptionalEnvValue(processEnv.NEARAI_API_KEY, profile.apiKey)
@@ -713,9 +808,27 @@ function isProcessEnvAlignedWithProfile(
     (isFireworksBaseUrl(profile.baseUrl)
       ? !includeApiKey ||
         sameOptionalEnvValue(processEnv.FIREWORKS_API_KEY, profile.apiKey)
+      : true) &&
+    (isLongcatBaseUrl(profile.baseUrl)
+      ? !includeApiKey ||
+        sameOptionalEnvValue(processEnv.LONGCAT_API_KEY, profile.apiKey)
+      : true) &&
+    (isCloudflareBaseUrl(profile.baseUrl)
+      ? !includeApiKey ||
+        sameOptionalEnvValue(processEnv.CLOUDFLARE_API_TOKEN, profile.apiKey)
       : true)
   )
 }
+
+/**
+ * Sentinel `activeProviderProfileId` meaning "use built-in Anthropic", kept
+ * distinct from `undefined`. Without it, clearing the active id falls through
+ * to `profiles[0]` (see below), so a user with any saved third-party profile
+ * could never return to Anthropic from `/provider` without hand-editing
+ * `~/.openclaude.json` and restarting (#1426). Storing the sentinel preserves
+ * the saved profiles for re-selection while expressing "no third-party active".
+ */
+export const ANTHROPIC_DEFAULT_PROFILE_ID = '__anthropic_default__'
 
 export function getActiveProviderProfile(
   config = getGlobalConfig(),
@@ -725,31 +838,36 @@ export function getActiveProviderProfile(
     return undefined
   }
 
-  const userSettings = getSettingsForSource('userSettings')
-  if (userSettings?.isolateProviderSessions) {
-    const sessionActiveId = getSessionLocalActiveProfileId()
-    if (sessionActiveId) {
-      const profile = profiles.find(p => p.id === sessionActiveId)
-      if (profile) return profile
-    }
+  const activeId = trimOrUndefined(config.activeProviderProfileId)
+  // Explicit Anthropic selection: do not fall back to the first saved profile.
+  if (activeId === ANTHROPIC_DEFAULT_PROFILE_ID) {
+    return undefined
   }
+  return profiles.find(profile => profile.id === activeId) ?? profiles[0]
+}
 
-  const localSettings = getSettingsForSource('localSettings')
-  const projectSettings = getSettingsForSource('projectSettings')
+/**
+ * Switch back to built-in Anthropic while keeping saved provider profiles.
+ * Clears the managed env this session (so the switch takes effect without a
+ * restart), records the Anthropic sentinel as the active id (so startup no
+ * longer replays a third-party profile), and removes the startup profile
+ * mirror file. Returns false when there was nothing to clear.
+ */
+export function clearActiveProviderProfile(
+  options?: ProfileFileLocation,
+): boolean {
+  const hadActiveProfile = getActiveProviderProfile() !== undefined
 
-  const settingsActiveId =
-    localSettings?.activeProviderProfileId ||
-    projectSettings?.activeProviderProfileId ||
-    userSettings?.activeProviderProfileId
+  saveGlobalConfig(config => ({
+    ...config,
+    activeProviderProfileId: ANTHROPIC_DEFAULT_PROFILE_ID,
+    openaiAdditionalModelOptionsCache: [],
+  }))
 
-  const activeId = trimOrUndefined(settingsActiveId || config.activeProviderProfileId)
-  const defaultProfile = profiles.find(profile => profile.id === activeId) ?? profiles[0]
+  clearProviderProfileEnvFromProcessEnv()
+  deleteProfileFile(options)
 
-  if (userSettings?.isolateProviderSessions && defaultProfile) {
-    saveSessionLocalActiveProfileId(defaultProfile.id)
-  }
-
-  return defaultProfile
+  return hadActiveProfile
 }
 
 export function clearProviderProfileEnvFromProcessEnv(
@@ -760,9 +878,12 @@ export function clearProviderProfileEnvFromProcessEnv(
   delete processEnv[PROFILE_ENV_APPLIED_ID]
 }
 
-export function applyProviderProfileToProcessEnv(profile: ProviderProfile): void {
+export function applyProviderProfileToProcessEnv(
+  profile: ProviderProfile,
+  options?: { primaryModel?: string },
+): void {
   const { route, compatibilityMode } = resolveProfileCompatibility(profile.provider)
-  const primaryModel = getPrimaryModel(profile.model)
+  const primaryModel = options?.primaryModel ?? getPrimaryModel(profile.model)
   let profileEnv: ProfileEnv
 
   if (route.routeId === 'unknown-fallback') {
@@ -787,7 +908,7 @@ export function applyProviderProfileToProcessEnv(profile: ProviderProfile): void
       profileEnv = {
         ANTHROPIC_BASE_URL: profile.baseUrl,
         ANTHROPIC_MODEL: primaryModel,
-        ...(profile.apiKey ? { ANTHROPIC_API_KEY: profile.apiKey } : {}),
+        ...buildAnthropicCredentialEnv(profile.provider, profile.apiKey),
       }
     }
   } else if (compatibilityMode === 'mistral') {
@@ -830,15 +951,22 @@ export function applyProviderProfileToProcessEnv(profile: ProviderProfile): void
     const supportsApiFormat = routeSupportsApiFormatSelection(capabilityRouteId)
     const supportsAuthHeaders = routeSupportsAuthHeaders(capabilityRouteId)
     const normalizedProfileBaseUrl =
-      route.routeId === 'xiaomi-mimo'
+      route.routeId === 'xiaomi-mimo' || route.routeId === 'xiaomi-mimo-token'
         ? normalizeXiaomiMimoBaseUrl(profile.baseUrl) ?? profile.baseUrl
         : profile.baseUrl
     const openAIProfileEnv: ProfileEnv = {
       OPENAI_BASE_URL: normalizedProfileBaseUrl,
       OPENAI_MODEL: primaryModel,
     }
+    const isAimlapiProfile =
+      profile.provider === 'aimlapi' ||
+      route.routeId === 'aimlapi' ||
+      resolveRouteIdFromBaseUrl(profile.baseUrl) === 'aimlapi'
     if (supportsApiFormat && profile.apiFormat) {
       openAIProfileEnv.OPENAI_API_FORMAT = profile.apiFormat
+    }
+    if (profile.azureStyle) {
+      openAIProfileEnv.OPENAI_AZURE_STYLE = '1'
     }
     if (supportsAuthHeaders && profile.authHeader) {
       openAIProfileEnv.OPENAI_AUTH_HEADER = profile.authHeader
@@ -870,20 +998,65 @@ export function applyProviderProfileToProcessEnv(profile: ProviderProfile): void
       if (route.routeId === 'xai' || isXaiBaseUrl(profile.baseUrl)) {
         openAIProfileEnv.XAI_API_KEY = profile.apiKey
       }
+      if (isAimlapiProfile) {
+        openAIProfileEnv.AIMLAPI_API_KEY = profile.apiKey
+      }
       if (route.routeId === 'venice' || profile.baseUrl.toLowerCase().includes('api.venice.ai')) {
         openAIProfileEnv.VENICE_API_KEY = profile.apiKey
       }
-      if (route.routeId === 'xiaomi-mimo' || profile.baseUrl.toLowerCase().includes('api.xiaomimimo.com') || profile.baseUrl.toLowerCase().includes('api.mimo-v2.com')) {
+      if (
+        route.routeId === 'xiaomi-mimo' ||
+        route.routeId === 'xiaomi-mimo-token' ||
+        isXiaomiMimoBaseUrl(profile.baseUrl)
+      ) {
         openAIProfileEnv.MIMO_API_KEY = profile.apiKey
       }
       if (route.routeId === 'atlas-cloud' || profile.baseUrl.toLowerCase().includes('atlascloud')) {
         openAIProfileEnv.ATLAS_CLOUD_API_KEY = profile.apiKey
+      }
+      if (isClinePassProfile(profile)) {
+        openAIProfileEnv.CLINE_API_KEY = profile.apiKey
       }
       if (route.routeId === 'nearai' || isNearaiBaseUrl(profile.baseUrl)) {
         openAIProfileEnv.NEARAI_API_KEY = profile.apiKey
       }
       if (route.routeId === 'fireworks' || isFireworksBaseUrl(profile.baseUrl)) {
         openAIProfileEnv.FIREWORKS_API_KEY = profile.apiKey
+      }
+      if (isLongcatBaseUrl(profile.baseUrl)) {
+        openAIProfileEnv.LONGCAT_API_KEY = profile.apiKey
+      }
+      // Gate on the Workers AI path predicate (isCloudflareBaseUrl: exact
+      // api.cloudflare.com host AND the `/client/v4/accounts/<id>/ai/v1` path),
+      // not the saved route id and not the host alone. A cloudflare profile
+      // retargeted to the shared gateway.ai.cloudflare.com AI Gateway host, or
+      // to a non-Workers api.cloudflare.com REST path, keeps
+      // routeId === 'cloudflare' yet is not a Workers AI endpoint — mirroring
+      // CLOUDFLARE_API_TOKEN on the route id (or on host alone) would leak the
+      // token to it. The sibling sites (isProcessEnvAlignedWithProfile,
+      // buildOpenAICompatibleStartupEnv) key on the same isCloudflareBaseUrl
+      // path predicate.
+      if (isCloudflareBaseUrl(profile.baseUrl)) {
+        openAIProfileEnv.CLOUDFLARE_API_TOKEN = profile.apiKey
+      }
+    }
+    if (isAimlapiProfile) {
+      openAIProfileEnv.CLAUDE_CODE_PROVIDER_ROUTE_ID = 'aimlapi'
+      // The ambient AIMLAPI_API_KEY is the canonical aimlapi.com credential.
+      // Only forward it when the profile targets the canonical inference host;
+      // a keyless `aimlapi` profile can point at a user-controlled proxy, and
+      // injecting the credential there would leak it. This mirrors the
+      // guided-flow validation, which also gates on the canonical URL. A missing
+      // base URL resolves to the aimlapi default (which is canonical), so treat
+      // it as canonical rather than passing undefined into the string helper.
+      if (!profile.baseUrl || isCanonicalAimlapiInferenceBaseUrl(profile.baseUrl)) {
+        const ambientAimlapiKey =
+          trimOrUndefined(process.env.AIMLAPI_API_KEY) ??
+          trimOrUndefined(process.env.OPENAI_API_KEY)
+        openAIProfileEnv.OPENAI_API_KEY =
+          openAIProfileEnv.OPENAI_API_KEY ?? ambientAimlapiKey
+        openAIProfileEnv.AIMLAPI_API_KEY =
+          openAIProfileEnv.AIMLAPI_API_KEY ?? ambientAimlapiKey
       }
     }
     if (route.gatewayId === 'nvidia-nim') {
@@ -920,6 +1093,28 @@ export function applyActiveProviderProfileFromConfig(
   },
 ): ProviderProfile | undefined {
   const processEnv = options?.processEnv ?? process.env
+
+  // Built-in Anthropic is an explicit active state recorded as the sentinel,
+  // not "no active profile". getActiveProviderProfile() resolves the sentinel
+  // to undefined, so without this guard we would return below without marking
+  // provider env as handled; buildStartupEnvFromProfile() then treats the
+  // profile mirror that clearActiveProviderProfile() deleted as a fresh install
+  // and synthesizes the default Gitlawb OpenGateway env, bouncing the user off
+  // built-in Anthropic on the next launch (#1429). Clear any managed provider
+  // env and set the applied flag so the legacy/fresh-install fallback is
+  // suppressed. An explicit startup provider selection still wins for the
+  // current session, matching the saved-profile branch below.
+  if (
+    trimOrUndefined(config.activeProviderProfileId) === ANTHROPIC_DEFAULT_PROFILE_ID
+  ) {
+    if (!options?.force && hasCompleteProviderSelection(processEnv)) {
+      return undefined
+    }
+    clearProviderProfileEnvFromProcessEnv(processEnv)
+    processEnv[PROFILE_ENV_APPLIED_FLAG] = '1'
+    return undefined
+  }
+
   const activeProfile = getActiveProviderProfile(config)
   if (!activeProfile) {
     return undefined
@@ -946,12 +1141,20 @@ export function applyActiveProviderProfileFromConfig(
       return undefined
     }
 
-    if (isProcessEnvAlignedWithProfile(processEnv, activeProfile)) {
+    const savedPrimaryModel = getSavedModelOverrideForProfile(activeProfile)
+    if (
+      isProcessEnvAlignedWithProfile(processEnv, activeProfile, {
+        primaryModel: savedPrimaryModel,
+      })
+    ) {
       return activeProfile
     }
   }
 
-  applyProviderProfileToProcessEnv(activeProfile)
+  const savedPrimaryModel = getSavedModelOverrideForProfile(activeProfile)
+  applyProviderProfileToProcessEnv(activeProfile, {
+    primaryModel: savedPrimaryModel,
+  })
   return activeProfile
 }
 
@@ -970,10 +1173,28 @@ export function addProviderProfile(
     const currentProfiles = getProviderProfiles(current)
     const nextProfiles = [...currentProfiles, profile]
     const currentActive = trimOrUndefined(current.activeProviderProfileId)
+    // Resolve the *effective* active id the same way getActiveProviderProfile
+    // does, so adding a profile with makeActive:false preserves whatever is
+    // actually active now rather than silently switching the user (#1426):
+    //   - Anthropic sentinel               -> built-in Anthropic (keep sentinel)
+    //   - explicit id for a saved profile  -> that profile
+    //   - stale or unset id with profiles  -> implicit first profile
+    //   - no saved profiles                -> nothing active yet
+    // The stale-id case matters: getActiveProviderProfile() falls back to
+    // profiles[0] for an id whose profile was deleted, so makeActive:false must
+    // keep profiles[0] and not promote the newly added profile.
+    let effectiveActiveId: string | undefined
+    if (currentActive === ANTHROPIC_DEFAULT_PROFILE_ID) {
+      effectiveActiveId = ANTHROPIC_DEFAULT_PROFILE_ID
+    } else if (currentActive && currentProfiles.some(p => p.id === currentActive)) {
+      effectiveActiveId = currentActive
+    } else if (currentProfiles.length > 0) {
+      effectiveActiveId = currentProfiles[0].id
+    } else {
+      effectiveActiveId = undefined
+    }
     const nextActiveId =
-      makeActive || !currentActive || !nextProfiles.some(p => p.id === currentActive)
-        ? profile.id
-        : currentActive
+      makeActive || effectiveActiveId === undefined ? profile.id : effectiveActiveId
 
     return {
       ...current,
@@ -1024,8 +1245,12 @@ export function updateProviderProfile(
     delete cacheByProfile[profileId]
 
     const currentActive = trimOrUndefined(current.activeProviderProfileId)
+    // Updating any profile must not reactivate profiles[0] when the user is on
+    // built-in Anthropic — the sentinel is a valid active state to preserve.
     const nextActiveId =
-      currentActive && nextProfiles.some(profile => profile.id === currentActive)
+      currentActive &&
+      (currentActive === ANTHROPIC_DEFAULT_PROFILE_ID ||
+        nextProfiles.some(profile => profile.id === currentActive))
         ? currentActive
         : nextProfiles[0]?.id
 
@@ -1047,7 +1272,7 @@ export function updateProviderProfile(
   }
 
   if (shouldApply) {
-    applyProviderProfileToProcessEnv(updatedProfile)
+    setActiveProviderProfile(profileId)
   }
 
   return updatedProfile
@@ -1115,6 +1340,9 @@ function buildOpenAICompatibleStartupEnv(
   if (isCodexBaseUrl(activeProfile.baseUrl)) {
     return null
   }
+  const isAimlapiProfile =
+    activeProfile.provider === 'aimlapi' ||
+    resolveRouteIdFromBaseUrl(activeProfile.baseUrl) === 'aimlapi'
 
   if (activeProfile.apiKey) {
     const strictEnv = buildOpenAIProfileEnv({
@@ -1123,6 +1351,7 @@ function buildOpenAICompatibleStartupEnv(
       baseUrl: activeProfile.baseUrl,
       apiKey: activeProfile.apiKey,
       apiFormat: activeProfile.apiFormat,
+      azureStyle: activeProfile.azureStyle ? '1' : undefined,
       authHeader: activeProfile.authHeader,
       authScheme: activeProfile.authScheme,
       authHeaderValue: activeProfile.authHeaderValue,
@@ -1130,17 +1359,37 @@ function buildOpenAICompatibleStartupEnv(
       processEnv: {},
     })
     if (strictEnv) {
+      if (isAimlapiProfile) {
+        strictEnv.AIMLAPI_API_KEY = activeProfile.apiKey
+        strictEnv.CLAUDE_CODE_PROVIDER_ROUTE_ID = 'aimlapi'
+      }
       // Atlas Cloud is dedicatedCredentialsOnly: its route ignores
       // OPENAI_API_KEY, so a generic OpenAI profile pointed at Atlas must
       // persist the dedicated key too or it relaunches unauthenticated.
       if (activeProfile.baseUrl?.toLowerCase().includes('atlascloud')) {
         strictEnv.ATLAS_CLOUD_API_KEY = activeProfile.apiKey
       }
+      if (isClinePassProfile(activeProfile)) {
+        strictEnv.CLINE_API_KEY = activeProfile.apiKey
+      }
       if (isNearaiBaseUrl(activeProfile.baseUrl)) {
         strictEnv.NEARAI_API_KEY = activeProfile.apiKey
       }
       if (isFireworksBaseUrl(activeProfile.baseUrl)) {
         strictEnv.FIREWORKS_API_KEY = activeProfile.apiKey
+      }
+      if (isLongcatBaseUrl(activeProfile.baseUrl)) {
+        strictEnv.LONGCAT_API_KEY = activeProfile.apiKey
+      }
+      // Cloudflare's transport reads the dedicated CLOUDFLARE_API_TOKEN; mirror
+      // it like nearai/fireworks, but only when the base URL is a real Workers
+      // AI endpoint per the isCloudflareBaseUrl path predicate (exact
+      // api.cloudflare.com host AND the `/client/v4/accounts/<id>/ai/v1` path),
+      // so a keyed Cloudflare profile's persisted startup env stays consistent
+      // and re-detects correctly after relaunch without persisting the token
+      // for a non-Workers api.cloudflare.com path or the shared AI Gateway host.
+      if (isCloudflareBaseUrl(activeProfile.baseUrl)) {
+        strictEnv.CLOUDFLARE_API_TOKEN = activeProfile.apiKey
       }
       return applySupportedProfileCustomHeaders(activeProfile, strictEnv)
     }
@@ -1150,6 +1399,7 @@ function buildOpenAICompatibleStartupEnv(
     OPENAI_BASE_URL: activeProfile.baseUrl,
     OPENAI_MODEL: getPrimaryModel(activeProfile.model),
     ...(activeProfile.apiFormat ? { OPENAI_API_FORMAT: activeProfile.apiFormat } : {}),
+    ...(activeProfile.azureStyle ? { OPENAI_AZURE_STYLE: '1' } : {}),
     ...(activeProfile.authHeader ? { OPENAI_AUTH_HEADER: activeProfile.authHeader } : {}),
     ...(activeProfile.authScheme ? { OPENAI_AUTH_SCHEME: activeProfile.authScheme } : {}),
     ...(activeProfile.authHeaderValue ? { OPENAI_AUTH_HEADER_VALUE: activeProfile.authHeaderValue } : {}),
@@ -1162,6 +1412,9 @@ function buildOpenAICompatibleStartupEnv(
       : {}),
   }
 
+  if (isAimlapiProfile) {
+    env.CLAUDE_CODE_PROVIDER_ROUTE_ID = 'aimlapi'
+  }
   if (activeProfile.apiKey) {
     env.OPENAI_API_KEY = activeProfile.apiKey
     if (activeProfile.baseUrl?.toLowerCase().includes('bankr')) {
@@ -1169,6 +1422,9 @@ function buildOpenAICompatibleStartupEnv(
     }
     if (isXaiBaseUrl(activeProfile.baseUrl)) {
       env.XAI_API_KEY = activeProfile.apiKey
+    }
+    if (isAimlapiProfile) {
+      env.AIMLAPI_API_KEY = activeProfile.apiKey
     }
     if (activeProfile.baseUrl?.toLowerCase().includes('api.venice.ai')) {
       env.VENICE_API_KEY = activeProfile.apiKey
@@ -1182,11 +1438,27 @@ function buildOpenAICompatibleStartupEnv(
     if (activeProfile.baseUrl?.toLowerCase().includes('atlascloud')) {
       env.ATLAS_CLOUD_API_KEY = activeProfile.apiKey
     }
+    if (isClinePassProfile(activeProfile)) {
+      env.CLINE_API_KEY = activeProfile.apiKey
+    }
     if (isNearaiBaseUrl(activeProfile.baseUrl)) {
       env.NEARAI_API_KEY = activeProfile.apiKey
     }
     if (isFireworksBaseUrl(activeProfile.baseUrl)) {
       env.FIREWORKS_API_KEY = activeProfile.apiKey
+    }
+    if (isLongcatBaseUrl(activeProfile.baseUrl)) {
+      env.LONGCAT_API_KEY = activeProfile.apiKey
+    }
+    // Cloudflare Workers AI authenticates over the generic OpenAI-compatible
+    // header, so mirror the saved key into CLOUDFLARE_API_TOKEN only when the
+    // endpoint is the real Workers AI route: api.cloudflare.com with the
+    // /client/v4/accounts/<id>/ai/v1 path over HTTPS (isCloudflareBaseUrl).
+    // Non-Workers api.cloudflare.com paths and the shared AI Gateway host
+    // (gateway.ai.cloudflare.com) are excluded — they proxy arbitrary
+    // providers (#1100 review).
+    if (isCloudflareBaseUrl(activeProfile.baseUrl)) {
+      env.CLOUDFLARE_API_TOKEN = activeProfile.apiKey
     }
   } else {
     delete env.OPENAI_API_KEY
@@ -1221,9 +1493,10 @@ function buildStartupProfileFromActiveProfile(
         env: applySupportedProfileCustomHeaders(activeProfile, {
           ANTHROPIC_BASE_URL: activeProfile.baseUrl,
           ANTHROPIC_MODEL: getPrimaryModel(activeProfile.model),
-          ...(activeProfile.apiKey
-            ? { ANTHROPIC_API_KEY: activeProfile.apiKey }
-            : {}),
+          ...buildAnthropicCredentialEnv(
+            activeProfile.provider,
+            activeProfile.apiKey,
+          ),
         }),
       }
     case 'gemini': {
@@ -1341,7 +1614,7 @@ function buildStartupProfileFromActiveProfile(
           : null
       }
 
-      if (route.vendorId === 'atlas-cloud') {
+      if (route.routeId === 'atlas-cloud') {
         const env =
           buildAtlasCloudProfileEnv({
             model: getPrimaryModel(activeProfile.model),
@@ -1427,20 +1700,6 @@ export function setActiveProviderProfile(
     },
   }))
 
-  const userSettings = getSettingsForSource('userSettings')
-  const saveScope = userSettings?.defaultProviderSaveScope ?? 'global'
-  if (saveScope === 'project') {
-    updateSettingsForSource('localSettings', { activeProviderProfileId: profileId })
-    updateSettingsForSource('userSettings', { activeProviderProfileId: undefined })
-  } else {
-    updateSettingsForSource('userSettings', { activeProviderProfileId: profileId })
-    updateSettingsForSource('localSettings', { activeProviderProfileId: undefined })
-  }
-
-  if (userSettings?.isolateProviderSessions) {
-    saveSessionLocalActiveProfileId(profileId)
-  }
-
   applyProviderProfileToProcessEnv(activeProfile)
   triggerStartupDiscoveryRefreshForProfile(activeProfile)
 
@@ -1463,6 +1722,7 @@ export function deleteProviderProfile(profileId: string): {
   let removed = false
   let deletedProfile: ProviderProfile | undefined
   let nextActiveProfile: ProviderProfile | undefined
+  let activeProfileWasDeleted = false
 
   saveGlobalConfig(current => {
     const currentProfiles = getProviderProfiles(current)
@@ -1477,13 +1737,19 @@ export function deleteProviderProfile(profileId: string): {
 
     const nextProfiles = currentProfiles.filter(profile => profile.id !== profileId)
     const currentActive = trimOrUndefined(current.activeProviderProfileId)
+    // The Anthropic sentinel survives deletion of any other profile — deleting
+    // an inactive saved profile must not knock a built-in-Anthropic user back
+    // onto profiles[0] (#1426).
     const activeWasDeleted =
-      !currentActive || currentActive === profileId ||
-      !nextProfiles.some(profile => profile.id === currentActive)
+      !currentActive ||
+      currentActive === profileId ||
+      (currentActive !== ANTHROPIC_DEFAULT_PROFILE_ID &&
+        !nextProfiles.some(profile => profile.id === currentActive))
+    activeProfileWasDeleted = activeWasDeleted
 
     const nextActiveId = activeWasDeleted ? nextProfiles[0]?.id : currentActive
 
-    if (nextActiveId) {
+    if (nextActiveId && nextActiveId !== ANTHROPIC_DEFAULT_PROFILE_ID) {
       nextActiveProfile =
         nextProfiles.find(profile => profile.id === nextActiveId) ?? nextProfiles[0]
     }
@@ -1514,36 +1780,16 @@ export function deleteProviderProfile(profileId: string): {
   })
 
   if (nextActiveProfile) {
-    applyProviderProfileToProcessEnv(nextActiveProfile)
-  } else if (
-    deletedProfile &&
-    isProcessEnvAlignedWithProfile(process.env, deletedProfile, {
-      includeApiKey: false,
-    })
-  ) {
-    clearProviderProfileEnvFromProcessEnv()
-  }
-
-  const userSettings = getSettingsForSource('userSettings')
-  const localSettings = getSettingsForSource('localSettings')
-  const nextActiveId = nextActiveProfile?.id
-
-  if (userSettings?.activeProviderProfileId === profileId) {
-    updateSettingsForSource('userSettings', { activeProviderProfileId: nextActiveId })
-  }
-  if (localSettings?.activeProviderProfileId === profileId) {
-    updateSettingsForSource('localSettings', { activeProviderProfileId: nextActiveId })
-  }
-
-  if (userSettings?.isolateProviderSessions) {
-    const sessionActiveId = getSessionLocalActiveProfileId()
-    if (sessionActiveId === profileId) {
-      if (nextActiveId) {
-        saveSessionLocalActiveProfileId(nextActiveId)
-      } else {
-        deleteSessionLocalActiveProfileId()
-      }
+    setActiveProviderProfile(nextActiveProfile.id)
+  } else if (deletedProfile && activeProfileWasDeleted) {
+    if (
+      isProcessEnvAlignedWithProfile(process.env, deletedProfile, {
+        includeApiKey: false,
+      })
+    ) {
+      clearProviderProfileEnvFromProcessEnv()
     }
+    deleteProfileFile()
   }
 
   return {

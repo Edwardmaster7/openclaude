@@ -22,7 +22,7 @@ import {
   execSyncWithDefaults_DEPRECATED,
 } from './execFileNoThrow.js'
 import { getFsImplementation } from './fsOperations.js'
-import { getAncestorPidsAsync, getAncestorCommandsAsync } from './genericProcessUtils.js'
+import { getAncestorPidsAsync } from './genericProcessUtils.js'
 import { isJetBrainsPluginInstalledCached } from './jetbrains.js'
 import { logError } from './log.js'
 import { getPlatform } from './platform.js'
@@ -100,9 +100,9 @@ export type DetectedIDEInfo = {
 }
 
 export type IdeType =
-  | 'antigravity'
   | 'cursor'
   | 'windsurf'
+  | 'agy'
   | 'vscode'
   | 'pycharm'
   | 'intellij'
@@ -129,13 +129,6 @@ type IdeConfig = {
 }
 
 const supportedIdeConfigs: Record<IdeType, IdeConfig> = {
-  antigravity: {
-    ideKind: 'vscode',
-    displayName: 'Antigravity',
-    processKeywordsMac: ['Antigravity IDE Helper', 'Antigravity IDE.app'],
-    processKeywordsWindows: ['antigravity-ide.exe'],
-    processKeywordsLinux: ['antigravity-ide'],
-  },
   cursor: {
     ideKind: 'vscode',
     displayName: 'Cursor',
@@ -149,6 +142,13 @@ const supportedIdeConfigs: Record<IdeType, IdeConfig> = {
     processKeywordsMac: ['Windsurf Helper', 'Windsurf.app'],
     processKeywordsWindows: ['windsurf.exe'],
     processKeywordsLinux: ['windsurf'],
+  },
+  agy: {
+    ideKind: 'vscode',
+    displayName: 'Antigravity',
+    processKeywordsMac: ['Antigravity Helper', 'Antigravity.app'],
+    processKeywordsWindows: ['antigravity.exe', 'agy.exe'],
+    processKeywordsLinux: ['antigravity', 'agy'],
   },
   vscode: {
     ideKind: 'vscode',
@@ -482,7 +482,7 @@ export async function getIdeLockfilesPaths(): Promise<string[]> {
   if (windowsHome) {
     const converter = new WindowsToWSLConverter(process.env.WSL_DISTRO_NAME)
     const wslPath = converter.toLocalPath(windowsHome)
-    paths.push(resolve(wslPath, '.claude', 'ide'))
+    paths.push(resolve(wslPath, '.openclaude', 'ide'))
   }
 
   // Construct the path based on the standard Windows WSL locations
@@ -507,7 +507,7 @@ export async function getIdeLockfilesPaths(): Promise<string[]> {
       ) {
         continue // Skip system directories
       }
-      paths.push(join(usersDir, user.name, '.claude', 'ide'))
+      paths.push(join(usersDir, user.name, '.openclaude', 'ide'))
     }
   } catch (error: unknown) {
     if (isFsInaccessible(error)) {
@@ -956,7 +956,7 @@ async function getInstalledVSCodeExtensionVersion(
   return null
 }
 
-async function getVSCodeIDECommandByParentProcess(): Promise<string | null> {
+function getVSCodeIDECommandByParentProcess(): string | null {
   try {
     const platform = getPlatform()
 
@@ -966,16 +966,22 @@ async function getVSCodeIDECommandByParentProcess(): Promise<string | null> {
       return null
     }
 
-    // Fetch ancestor process commands asynchronously using a single sh/ps chain invocation
-    // which has a strict timeout of 3000ms.
-    const commands = await getAncestorCommandsAsync(process.ppid, 10)
+    let pid = process.ppid
 
-    for (const command of commands) {
+    // Walk up the process tree to find the actual app
+    for (let i = 0; i < 10; i++) {
+      if (!pid || pid === 0 || pid === 1) break
+
+      // Get the command for this PID
+      // this function already returned if not running on macos
+      const command = execSyncWithDefaults_DEPRECATED(
+        // eslint-disable-next-line custom-rules/no-direct-ps-commands
+        `ps -o command= -p ${pid}`,
+      )?.trim()
+
       if (command) {
-        const trimmedCommand = command.trim()
         // Check for known applications and extract the path up to and including .app
         const appNames = {
-          'Antigravity IDE.app': 'antigravity-ide',
           'Visual Studio Code.app': 'code',
           'Cursor.app': 'cursor',
           'Windsurf.app': 'windsurf',
@@ -985,19 +991,30 @@ async function getVSCodeIDECommandByParentProcess(): Promise<string | null> {
         const pathToExecutable = '/Contents/MacOS/Electron'
 
         for (const [appName, executableName] of Object.entries(appNames)) {
-          const appIndex = trimmedCommand.indexOf(appName + pathToExecutable)
+          const appIndex = command.indexOf(appName + pathToExecutable)
           if (appIndex !== -1) {
             // Extract the path from the beginning to the end of the .app name
             const folderPathEnd = appIndex + appName.length
             // These are all known VSCode variants with the same structure
             return (
-              trimmedCommand.substring(0, folderPathEnd) +
+              command.substring(0, folderPathEnd) +
               '/Contents/Resources/app/bin/' +
               executableName
             )
           }
         }
       }
+
+      // Get parent PID
+      // this function already returned if not running on macos
+      const ppidStr = execSyncWithDefaults_DEPRECATED(
+        // eslint-disable-next-line custom-rules/no-direct-ps-commands
+        `ps -o ppid= -p ${pid}`,
+      )?.trim()
+      if (!ppidStr) {
+        break
+      }
+      pid = parseInt(ppidStr.trim())
     }
 
     return null
@@ -1006,7 +1023,7 @@ async function getVSCodeIDECommandByParentProcess(): Promise<string | null> {
   }
 }
 async function getVSCodeIDECommand(ideType: IdeType): Promise<string | null> {
-  const parentExecutable = await getVSCodeIDECommandByParentProcess()
+  const parentExecutable = getVSCodeIDECommandByParentProcess()
   if (parentExecutable) {
     // Verify the parent executable actually exists
     try {
@@ -1033,8 +1050,8 @@ async function getVSCodeIDECommand(ideType: IdeType): Promise<string | null> {
       return 'cursor' + ext
     case 'windsurf':
       return 'windsurf' + ext
-    case 'antigravity':
-      return 'antigravity-ide' + ext
+    case 'agy':
+      return 'agy' + ext
     default:
       break
   }
@@ -1194,6 +1211,7 @@ const EDITOR_DISPLAY_NAMES: Record<string, string> = {
   cursor: 'Cursor',
   windsurf: 'Windsurf',
   antigravity: 'Antigravity',
+  agy: 'Antigravity',
   vi: 'Vim',
   vim: 'Vim',
   nano: 'nano',
