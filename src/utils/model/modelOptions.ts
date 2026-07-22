@@ -335,6 +335,11 @@ function getCodexSparkOption(): ModelOption {
 function getGeminiModelOptions(): ModelOption[] {
   return [
     {
+      value: 'gemini-3.6-flash',
+      label: 'Gemini 3.6 Flash',
+      description: 'Ultra-fast & highly capable · Latest Gemini 3.6 Flash model',
+    },
+    {
       value: 'gemini-3.1-pro-preview',
       label: 'Gemini 3.1 Pro Preview',
       description: 'Frontier reasoning · Most capable for complex work',
@@ -347,7 +352,7 @@ function getGeminiModelOptions(): ModelOption[] {
     {
       value: 'gemini-3.5-flash',
       label: 'Gemini 3.5 Flash',
-      description: 'Ultra-fast & highly capable · Latest Gemini model',
+      description: 'Ultra-fast & highly capable · Latest Gemini 3.5 Flash model',
     },
     {
       value: 'gemini-3-flash-preview',

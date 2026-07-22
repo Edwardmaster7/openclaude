@@ -107,10 +107,10 @@ export const COST_GEMINI_3_1_PRO_HIGH = {
 
 // Gemini 3.6 Flash
 export const COST_GEMINI_3_6_FLASH = {
-  inputTokens: 0.5,
-  outputTokens: 3,
-  promptCacheWriteTokens: 0.625,
-  promptCacheReadTokens: 0.125,
+  inputTokens: 1.5,
+  outputTokens: 7.5,
+  promptCacheWriteTokens: 0.75,
+  promptCacheReadTokens: 0.15,
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
 
@@ -217,6 +217,7 @@ export const MODEL_COSTS: Record<ModelShortName, ModelCosts> = {
   [firstPartyNameToCanonical(CLAUDE_OPUS_4_7_CONFIG.firstParty)]:
     COST_TIER_5_25,
   'gemini-3.6-flash': COST_GEMINI_3_6_FLASH,
+  'google/gemini-3.6-flash': COST_GEMINI_3_6_FLASH,
   'gemini-3.5-flash': COST_GEMINI_3_5_FLASH,
   'gemini-3.1-pro-preview': COST_GEMINI_3_1_PRO_LOW,
   'gemini-3-flash-preview': COST_GEMINI_3_FLASH,
