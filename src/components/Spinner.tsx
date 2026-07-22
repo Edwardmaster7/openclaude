@@ -1,6 +1,6 @@
 import { c as _c } from "react-compiler-runtime";
 // biome-ignore-all assist/source/organizeImports: internal-only import markers must not be reordered
-import { Box, Text, useTheme } from '../ink.js';
+import { Box, Text } from '../ink.js';
 import * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { computeGlimmerIndex, computeShimmerSegments, SHIMMER_INTERVAL_MS } from '../bridge/bridgeStatusUtil.js';
@@ -96,57 +96,6 @@ function SpinnerWithVerbInner({
 }: Props): React.ReactNode {
   const settings = useSettings();
   const reducedMotion = settings.prefersReducedMotion ?? false;
-  const [theme] = useTheme();
-
-  const [rotatedTip, setRotatedTip] = useState<string | undefined>(spinnerTip);
-
-  // Synchronize rotatedTip with the spinnerTip prop when it changes
-  useEffect(() => {
-    setRotatedTip(spinnerTip);
-  }, [spinnerTip]);
-
-  // Periodically rotate ads if earning is enabled
-  useEffect(() => {
-    const config = getGlobalConfig().ads;
-    const isEarning = Boolean(config?.enabled && config?.earnCode);
-    if (!isEarning || mode === 'idle') return;
-
-    let active = true;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const scheduleNextRotation = () => {
-      // Rotate every 15 seconds
-      // ponytail: 15s rotation interval, simple and robust
-      timer = setTimeout(async () => {
-        if (!active) return;
-        try {
-          const { buildEarningTip } = await import('../services/tips/gitlawbEarn.js');
-          const tipCtx = {
-            theme,
-            bashTools: new Set<string>(),
-            latestUserMessage: undefined
-          };
-          const tipObj = buildEarningTip();
-          const content = await tipObj.content(tipCtx);
-          if (active && content) {
-            setRotatedTip(content);
-          }
-        } catch (e) {
-          // ignore failures
-        }
-        if (active) {
-          scheduleNextRotation();
-        }
-      }, 15000);
-    };
-
-    scheduleNextRotation();
-
-    return () => {
-      active = false;
-      if (timer) clearTimeout(timer);
-    };
-  }, [mode, theme]);
 
   // NOTE: useAnimationFrame(50) lives in SpinnerAnimationRow, not here.
   // This component only re-renders when props or app state change —
@@ -298,7 +247,7 @@ function SpinnerWithVerbInner({
   const tipsEnabled = settings.spinnerTipsEnabled !== false;
   const showClearTip = tipsEnabled && elapsedSnapshot > 1_800_000;
   const showBtwTip = tipsEnabled && elapsedSnapshot > 30_000 && !getGlobalConfig().btwUseCount;
-  const effectiveTip = contextTipsActive ? undefined : showClearTip && !nextTask ? 'Use /clear to start fresh when switching topics and free up context' : showBtwTip && !nextTask ? "Use /btw to ask a quick side question without interrupting Claude's current work" : rotatedTip;
+  const effectiveTip = contextTipsActive ? undefined : showClearTip && !nextTask ? 'Use /clear to start fresh when switching topics and free up context' : showBtwTip && !nextTask ? "Use /btw to ask a quick side question without interrupting Claude's current work" : spinnerTip;
 
   // Budget text (internal-only) — shown above the tip line
   let budgetText: string | null = null;
