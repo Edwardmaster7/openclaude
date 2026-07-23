@@ -7220,7 +7220,7 @@ test('propagates reasoning_effort for catalog Gemini models', async () => {
     )
   }) as FetchType
 
-  // Test 'xhigh'
+  // Test 'xhigh' -> clamped to 'high'
   const clientXHigh = createOpenAIShimClient({ reasoningEffort: 'xhigh' }) as OpenAIShimClient
   await clientXHigh.beta.messages.create({
     model: 'google/gemini-3.6-flash',
@@ -7228,7 +7228,7 @@ test('propagates reasoning_effort for catalog Gemini models', async () => {
     max_tokens: 16,
     stream: false,
   })
-  expect(requestBody?.reasoning_effort).toBe('xhigh')
+  expect(requestBody?.reasoning_effort).toBe('high')
 
   // Test 'medium'
   const clientMedium = createOpenAIShimClient({ reasoningEffort: 'medium' }) as OpenAIShimClient

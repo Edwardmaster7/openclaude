@@ -4421,7 +4421,15 @@ class OpenAIShimMessages {
      // or `?reasoning=<level>` query on the model string). OpenAI, Codex, and
      // most OpenAI-compatible endpoints read it from this top-level field.
     if (reasoningRequestPlan.wireFormat === 'reasoning_effort' && reasoningRequestPlan.reasoningEffort) {
-      body.reasoning_effort = reasoningRequestPlan.reasoningEffort
+      const isGemini =
+        isGeminiModelName(request.resolvedModel) ||
+        isGeminiModelName(runtimeModel) ||
+        runtimeShimContext.routeId === 'gemini'
+      const effort = reasoningRequestPlan.reasoningEffort
+      body.reasoning_effort =
+        isGemini && (effort === 'xhigh' || effort === 'max')
+          ? 'high'
+          : effort
     }
     if (
       reasoningRequestPlan.wireFormat === 'reasoning_effort' &&
