@@ -533,6 +533,40 @@ test('strips store when providerOverride routes chat_completions to the Gemini h
   expect(capturedBody?.store).toBeUndefined()
 })
 
+test('propagates reasoning_effort when providerOverride routes chat_completions to Gemini with reasoningEffort', async () => {
+  let capturedBody: Record<string, unknown> | undefined
+
+  globalThis.fetch = (async (_input, init) => {
+    capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-gemini-reasoning',
+        choices: [{ message: { role: 'assistant', content: 'ok' } }],
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+  }) as unknown as FetchType
+
+  const client = createOpenAIShimClient({
+    defaultHeaders: {},
+    reasoningEffort: 'high',
+    providerOverride: {
+      model: 'google/gemini-3.6-flash',
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
+      apiKey: 'gemini-key',
+    },
+  }) as OpenAIShimClient
+
+  await client.beta.messages.create({
+    model: 'google/gemini-3.6-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    max_tokens: 64,
+    stream: false,
+  })
+
+  expect(capturedBody?.reasoning_effort).toBe('high')
+})
+
 test('strips store when providerOverride routes responses API to the Gemini host', async () => {
   process.env.OPENAI_API_FORMAT = 'responses'
   let capturedBody: Record<string, unknown> | undefined
@@ -571,6 +605,7 @@ test('strips store when providerOverride routes responses API to the Gemini host
   })
 
   expect(capturedBody?.store).toBeUndefined()
+  delete process.env.OPENAI_API_FORMAT
 })
 
 test('uses custom OpenAI-compatible auth header value when configured', async () => {
@@ -7042,11 +7077,13 @@ test('strips Anthropic attribution header block from responses-API instructions 
   expect(instructions).not.toContain('x-anthropic-billing-header')
   expect(instructions).not.toContain('cc_version=')
   expect(instructions).toContain('You are Claude Code.')
+  delete process.env.OPENAI_API_FORMAT
 })
 
 test('emits reasoning_effort on chat_completions when reasoningEffort is passed', async () => {
   process.env.OPENAI_BASE_URL = 'https://api.openai.com/v1'
   process.env.OPENAI_API_KEY = 'test-key'
+  process.env.OPENAI_API_FORMAT = 'chat_completions'
 
   let requestBody: Record<string, unknown> | undefined
 
@@ -7080,11 +7117,13 @@ test('emits reasoning_effort on chat_completions when reasoningEffort is passed'
   })
 
   expect(requestBody?.reasoning_effort).toBe('xhigh')
+  delete process.env.OPENAI_API_FORMAT
 })
 
 test('omits reasoning_effort on chat_completions when no override and model has no alias default', async () => {
   process.env.OPENAI_BASE_URL = 'https://api.openai.com/v1'
   process.env.OPENAI_API_KEY = 'test-key'
+  process.env.OPENAI_API_FORMAT = 'chat_completions'
 
   let requestBody: Record<string, unknown> | undefined
 
@@ -7116,11 +7155,13 @@ test('omits reasoning_effort on chat_completions when no override and model has 
   })
 
   expect(requestBody && 'reasoning_effort' in requestBody).toBe(false)
+  delete process.env.OPENAI_API_FORMAT
 })
 
 test('emits reasoning_effort from codex alias default when no override is passed', async () => {
   process.env.OPENAI_BASE_URL = 'https://api.openai.com/v1'
   process.env.OPENAI_API_KEY = 'test-key'
+  process.env.OPENAI_API_FORMAT = 'chat_completions'
 
   let requestBody: Record<string, unknown> | undefined
 
@@ -7152,11 +7193,13 @@ test('emits reasoning_effort from codex alias default when no override is passed
   })
 
   expect(requestBody?.reasoning_effort).toBe('high')
+  delete process.env.OPENAI_API_FORMAT
 })
 
-test('clamps reasoning_effort to low/medium/high for Gemini models', async () => {
+test('propagates reasoning_effort for catalog Gemini models', async () => {
   process.env.OPENAI_BASE_URL = 'https://api.openai.com/v1'
   process.env.OPENAI_API_KEY = 'test-key'
+  process.env.OPENAI_API_FORMAT = 'chat_completions'
 
   let requestBody: Record<string, unknown> | undefined
   globalThis.fetch = (async (_input, init) => {
@@ -7164,7 +7207,7 @@ test('clamps reasoning_effort to low/medium/high for Gemini models', async () =>
     return new Response(
       JSON.stringify({
         id: 'chatcmpl-1',
-        model: 'google/gemini-2.0-flash-thinking-exp',
+        model: 'google/gemini-3.6-flash',
         choices: [
           {
             message: { role: 'assistant', content: 'ok' },
@@ -7177,35 +7220,26 @@ test('clamps reasoning_effort to low/medium/high for Gemini models', async () =>
     )
   }) as FetchType
 
-  // Test 'max' => 'high'
-  const clientMax = createOpenAIShimClient({ reasoningEffort: 'max' }) as OpenAIShimClient
-  await clientMax.beta.messages.create({
-    model: 'google/gemini-2.0-flash-thinking-exp',
-    messages: [{ role: 'user', content: 'hi' }],
-    max_tokens: 16,
-    stream: false,
-  })
-  expect(requestBody?.reasoning_effort).toBe('high')
-
-  // Test 'xhigh' => 'high'
+  // Test 'xhigh' -> clamped to 'high'
   const clientXHigh = createOpenAIShimClient({ reasoningEffort: 'xhigh' }) as OpenAIShimClient
   await clientXHigh.beta.messages.create({
-    model: 'google/gemini-2.0-flash-thinking-exp',
+    model: 'google/gemini-3.6-flash',
     messages: [{ role: 'user', content: 'hi' }],
     max_tokens: 16,
     stream: false,
   })
   expect(requestBody?.reasoning_effort).toBe('high')
 
-  // Test 'medium' => 'medium'
+  // Test 'medium'
   const clientMedium = createOpenAIShimClient({ reasoningEffort: 'medium' }) as OpenAIShimClient
   await clientMedium.beta.messages.create({
-    model: 'google/gemini-2.0-flash-thinking-exp',
+    model: 'google/gemini-3.6-flash',
     messages: [{ role: 'user', content: 'hi' }],
     max_tokens: 16,
     stream: false,
   })
   expect(requestBody?.reasoning_effort).toBe('medium')
+  delete process.env.OPENAI_API_FORMAT
 })
 
 

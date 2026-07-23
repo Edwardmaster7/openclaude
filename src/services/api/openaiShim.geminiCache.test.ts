@@ -101,7 +101,7 @@ describe('Gemini Context Caching', () => {
 
     const client = createOpenAIShimClient({
       defaultHeaders: {},
-    })
+    }) as any
 
     const response = await client.messages.create({
       model: 'gemini-2.0-flash',

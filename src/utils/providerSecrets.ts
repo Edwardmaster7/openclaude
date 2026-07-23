@@ -1,15 +1,17 @@
 import type { ProviderPresetManifestEntry } from '../integrations/descriptors.js'
-import {
-  ANTHROPIC_PROXY_DESCRIPTORS,
-  GATEWAY_DESCRIPTORS,
-  PROVIDER_PRESET_MANIFEST,
-  VENDOR_DESCRIPTORS,
-} from '../integrations/generated/integrationArtifacts.generated.js'
+// Import the preset manifest from the lightweight manifest module (it only
+// imports a compile-time type, so it pulls in zero descriptor data). The heavy
+// descriptor arrays live in integrationArtifacts.generated.js and are required
+// lazily below so that merely importing this module on the bootstrap startup
+// path (bootstrap -> providerConfig -> providerProfile -> providerSecrets) does
+// not eagerly evaluate the full descriptor graph.
+import { PROVIDER_PRESET_MANIFEST } from '../integrations/generated/integrationManifest.generated.js'
 
 // Manually-curated fallback. Kept defensive for legacy and OAuth/token
 // credential paths that either predate descriptors or are accepted by
 // provider-specific auth helpers outside setup.credentialEnvVars.
 const FALLBACK_SECRET_ENV_KEYS: readonly string[] = [
+  'OPENAI_API_KEYS',
   'OPENAI_API_KEY',
   'OPENAI_AUTH_HEADER_VALUE',
   'CODEX_API_KEY',
@@ -19,6 +21,7 @@ const FALLBACK_SECRET_ENV_KEYS: readonly string[] = [
   'MISTRAL_API_KEY',
   'BNKR_API_KEY',
   'XAI_API_KEY',
+  'AIMLAPI_API_KEY',
 ]
 
 function readDescriptorCredentialEnvKeys(): readonly string[] {
@@ -31,10 +34,17 @@ function readDescriptorCredentialEnvKeys(): readonly string[] {
     }
   }
 
+  // Lazy require so the descriptor graph is only evaluated on the first (and,
+  // thanks to getKnownProviderSecretEnvKeys's cache, only) call, rather than at
+  // module import time. Same pattern as the lazy requires in integrations/index.ts.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const artifacts =
+    require('../integrations/generated/integrationArtifacts.generated.js') as typeof import('../integrations/generated/integrationArtifacts.generated.js')
+
   const descriptorsWithSetup = [
-    ...VENDOR_DESCRIPTORS,
-    ...GATEWAY_DESCRIPTORS,
-    ...(ANTHROPIC_PROXY_DESCRIPTORS as readonly { setup?: { credentialEnvVars?: readonly string[] } }[]),
+    ...artifacts.VENDOR_DESCRIPTORS,
+    ...artifacts.GATEWAY_DESCRIPTORS,
+    ...(artifacts.ANTHROPIC_PROXY_DESCRIPTORS as readonly { setup?: { credentialEnvVars?: readonly string[] } }[]),
   ]
   for (const descriptor of descriptorsWithSetup) {
     for (const key of descriptor.setup?.credentialEnvVars ?? []) {
@@ -188,6 +198,10 @@ function collectSecretValues(
       const value = sanitizeApiKey(source[key])?.trim()
       if (value) {
         values.add(value)
+        for (const part of value.split(',')) {
+          const trimmedPart = sanitizeApiKey(part)?.trim()
+          if (trimmedPart) values.add(trimmedPart)
+        }
       }
     }
   }
@@ -248,6 +262,64 @@ export function redactSecretSubstringsForDisplay(
     JWT_SUBSTRING_PATTERN,
     match => maskSecretForDisplay(match) ?? 'configured',
   )
+
+  return redacted
+}
+
+const MAX_SECRET_ENCODING_LAYERS = 4
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function encodedVariantPattern(value: string): string {
+  return Array.from(value, char => {
+    const lower = char.toLowerCase()
+    return lower >= 'a' && lower <= 'f'
+      ? `[${lower}${lower.toUpperCase()}]`
+      : escapeRegex(char)
+  }).join('')
+}
+
+function percentEncodeUtf8(value: string): string {
+  return Array.from(
+    new TextEncoder().encode(value),
+    byte => `%${byte.toString(16).padStart(2, '0').toUpperCase()}`,
+  ).join('')
+}
+
+function encodedSecretPattern(value: string): RegExp {
+  const characterPatterns = Array.from(value, char => {
+    const variants = [escapeRegex(char)]
+    let encoded = percentEncodeUtf8(char)
+    for (let layer = 0; layer < MAX_SECRET_ENCODING_LAYERS; layer++) {
+      variants.push(encodedVariantPattern(encoded))
+      encoded = encodeURIComponent(encoded)
+    }
+    return `(?:${variants.join('|')})`
+  })
+  return new RegExp(characterPatterns.join(''), 'g')
+}
+
+/**
+ * Redacts configured secrets when each character is literal or percent-encoded
+ * without decoding unrelated message text. Encoding depth is explicitly
+ * bounded to keep matching predictable on untrusted diagnostics.
+ */
+export function redactEncodedSecretSubstringsForDisplay(
+  value: string | null | undefined,
+  ...sources: Array<SecretValueSource | null | undefined>
+): string | undefined {
+  if (!value) return undefined
+
+  let redacted = value
+  const secretValues = collectSecretValues(sources).sort(
+    (a, b) => b.length - a.length,
+  )
+  for (const secretValue of secretValues) {
+    const mask = maskSecretForDisplay(secretValue) ?? 'configured'
+    redacted = redacted.replace(encodedSecretPattern(secretValue), mask)
+  }
 
   return redacted
 }

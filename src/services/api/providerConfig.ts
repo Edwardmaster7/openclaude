@@ -20,6 +20,14 @@ import {
   DEFAULT_GEMINI_MODEL,
 } from 'src/utils/providerProfile.js'
 import {
+  DEFAULT_CLINEPASS_BASE_URL,
+} from './clinepassUsage/types.js'
+import { getCatalogEntriesForRoute } from '../../integrations/registry.js'
+import {
+  getRouteDefaultModel,
+  isClinePassBaseUrl,
+} from '../../integrations/routeMetadata.js'
+import {
   openAIShimSupportsApiFormatForModel,
   resolveOpenAIShimRuntimeContext,
 } from '../../integrations/runtimeMetadata.js'
@@ -29,6 +37,7 @@ export const DEFAULT_CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex'
 export const DEFAULT_MISTRAL_BASE_URL = 'https://api.mistral.ai/v1'
 export const DEFAULT_OPENCODE_BASE_URL = 'https://opencode.ai/zen/v1'
 export const DEFAULT_OPENCODE_GO_BASE_URL = 'https://opencode.ai/zen/go/v1'
+export const DEFAULT_CLINEPASS_API_BASE_URL = `${DEFAULT_CLINEPASS_BASE_URL}/api/v1`
 /** Default GitHub Copilot API model when user selects copilot / github:copilot */
 export const DEFAULT_GITHUB_MODELS_API_MODEL = 'gpt-4o'
 const warnedUndefinedEnvNames = new Set<string>()
@@ -72,6 +81,24 @@ const CODEX_ALIAS_MODELS: Record<
   codexplan: {
     model: 'gpt-5.5',
     reasoningEffort: 'high',
+  },
+  // GPT-5.6 family (July 2026). `gpt-5.6` follows the Codex CLI convention of
+  // resolving the bare version to the flagship tier (Sol).
+  'gpt-5.6': {
+    model: 'gpt-5.6-sol',
+    reasoningEffort: 'high',
+  },
+  'gpt-5.6-sol': {
+    model: 'gpt-5.6-sol',
+    reasoningEffort: 'high',
+  },
+  'gpt-5.6-terra': {
+    model: 'gpt-5.6-terra',
+    reasoningEffort: 'medium',
+  },
+  'gpt-5.6-luna': {
+    model: 'gpt-5.6-luna',
+    reasoningEffort: 'medium',
   },
   'gpt-5.5': {
     model: 'gpt-5.5',
@@ -117,10 +144,17 @@ const CODEX_ALIAS_MODELS: Record<
 } as const
 
 type CodexAlias = keyof typeof CODEX_ALIAS_MODELS
-type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
+type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 type ThinkingType = 'enabled' | 'disabled'
 
 const OPENAI_CODEX_SHORTCUT_ALIASES = new Set(['codexplan', 'codexspark'])
+const KIMI_K3_REASONING_ALIASES: Record<ReasoningEffort, ReasoningEffort> = {
+  low: 'low',
+  medium: 'high',
+  high: 'high',
+  xhigh: 'max',
+  max: 'max',
+}
 
 export type ProviderTransport = 'chat_completions' | 'responses' | 'responses_compat' | 'codex_responses'
 export type OpenAICompatibleApiFormat = 'chat_completions' | 'responses' | 'responses_compat'
@@ -151,6 +185,11 @@ type ModelDescriptor = {
   reasoning?: {
     effort: ReasoningEffort
   }
+  // True when `reasoning` is the CODEX_ALIAS_MODELS default rather than an
+  // explicit ?reasoning= query pick. Alias defaults are a Codex convention:
+  // they must not leak onto non-Codex transports (an OPENAI_API_BASE gateway
+  // serving gpt-5.6 must not inherit first-party effort metadata).
+  reasoningFromAlias?: boolean
   thinking?: {
     type: ThinkingType
   }
@@ -249,10 +288,44 @@ function readNestedString(
   return undefined
 }
 
+function normalizeModelLookupKey(model: string): string {
+  return model.trim().split('?', 1)[0]?.trim().toLowerCase() ?? ''
+}
+
+function resolveRouteCatalogAliasApiName(options: {
+  model: string
+  baseUrl: string | undefined
+  processEnv: NodeJS.ProcessEnv
+}): string {
+  const normalizedModel = normalizeModelLookupKey(options.model)
+  if (!normalizedModel) return options.model
+
+  const runtimeShimContext = resolveOpenAIShimRuntimeContext({
+    processEnv: options.processEnv,
+    baseUrl: options.baseUrl,
+    model: options.model,
+    treatAsLocal: options.baseUrl ? isLocalProviderUrl(options.baseUrl) : false,
+    preferBaseUrlRoute: options.baseUrl !== undefined,
+  })
+  const routeId = runtimeShimContext.routeId
+  if (!routeId || routeId === 'anthropic' || routeId === 'openai') {
+    return options.model
+  }
+
+  const entry = getCatalogEntriesForRoute(routeId).find(catalogEntry =>
+    normalizeModelLookupKey(catalogEntry.apiName) === normalizedModel ||
+    normalizeModelLookupKey(catalogEntry.id) === normalizedModel ||
+    (catalogEntry.aliases ?? []).some(
+      alias => normalizeModelLookupKey(alias) === normalizedModel,
+    ),
+  )
+  return entry?.apiName ?? options.model
+}
+
 function parseReasoningEffort(value: string | undefined): ReasoningEffort | undefined {
   if (!value) return undefined
   const normalized = value.trim().toLowerCase()
-  if (normalized === 'low' || normalized === 'medium' || normalized === 'high' || normalized === 'xhigh') {
+  if (normalized === 'low' || normalized === 'medium' || normalized === 'high' || normalized === 'xhigh' || normalized === 'max') {
     return normalized
   }
   return undefined
@@ -294,11 +367,19 @@ export function parseOpenAICompatibleApiFormat(
 }
 
 function parseModelDescriptor(model: string): ModelDescriptor {
-  const trimmed = model.trim()
+  // A trailing [1m] suffix is the client-side 1M-context opt-in (see
+  // has1mContext) — never part of the wire model id or the ?query syntax.
+  // Strip it before parsing so tagged aliases keep their mapping and effort
+  // defaults and the resolved model id stays valid for the backend. The tag
+  // can trail the whole string (`gpt-5.6-sol?reasoning=medium[1m]`) or sit
+  // on the base id (`gpt-5.5[1m]`); both forms are handled.
+  const trimmed = model.trim().replace(/\[1m]$/i, '').trim()
   const queryIndex = trimmed.indexOf('?')
   if (queryIndex === -1) {
     const alias = trimmed.toLowerCase() as CodexAlias
-    const aliasConfig = CODEX_ALIAS_MODELS[alias]
+    const aliasConfig = Object.hasOwn(CODEX_ALIAS_MODELS, alias)
+      ? CODEX_ALIAS_MODELS[alias]
+      : undefined
     if (aliasConfig) {
       return {
         raw: trimmed,
@@ -306,6 +387,7 @@ function parseModelDescriptor(model: string): ModelDescriptor {
         reasoning: aliasConfig.reasoningEffort
           ? { effort: aliasConfig.reasoningEffort }
           : undefined,
+        reasoningFromAlias: Boolean(aliasConfig.reasoningEffort),
       }
     }
     return {
@@ -314,13 +396,19 @@ function parseModelDescriptor(model: string): ModelDescriptor {
     }
   }
 
-  const baseModel = trimmed.slice(0, queryIndex).trim()
+  const baseModel = trimmed
+    .slice(0, queryIndex)
+    .trim()
+    .replace(/\[1m]$/i, '')
   const params = new URLSearchParams(trimmed.slice(queryIndex + 1))
   const alias = baseModel.toLowerCase() as CodexAlias
-  const aliasConfig = CODEX_ALIAS_MODELS[alias]
+  const aliasConfig = Object.hasOwn(CODEX_ALIAS_MODELS, alias)
+    ? CODEX_ALIAS_MODELS[alias]
+    : undefined
   const resolvedBaseModel = aliasConfig?.model ?? baseModel
+  const queryReasoning = parseReasoningEffort(params.get('reasoning') ?? undefined)
   const reasoning =
-    parseReasoningEffort(params.get('reasoning') ?? undefined) ??
+    queryReasoning ??
     (aliasConfig?.reasoningEffort
       ? { effort: aliasConfig.reasoningEffort }
       : undefined)
@@ -330,6 +418,8 @@ function parseModelDescriptor(model: string): ModelDescriptor {
     raw: trimmed,
     baseModel: resolvedBaseModel,
     reasoning: typeof reasoning === 'string' ? { effort: reasoning } : reasoning,
+    reasoningFromAlias:
+      queryReasoning === undefined && Boolean(aliasConfig?.reasoningEffort),
     thinking: thinking ? { type: thinking } : undefined,
   }
 }
@@ -337,7 +427,7 @@ function parseModelDescriptor(model: string): ModelDescriptor {
 export function isCodexAlias(model: string): boolean {
   const normalized = model.trim().toLowerCase()
   const base = normalized.split('?', 1)[0] ?? normalized
-  return base in CODEX_ALIAS_MODELS
+  return Object.hasOwn(CODEX_ALIAS_MODELS, base)
 }
 
 function isOpenAICodexShortcutAlias(model: string): boolean {
@@ -369,6 +459,82 @@ function shouldUseGithubResponsesApi(model: string): boolean {
   return true
 }
 
+// GPT-5.4/5.5/5.6 (incl. sol/terra/luna suffixes) reject function tools +
+// reasoning_effort on /v1/chat/completions and must use /v1/responses. An
+// agent CLI always sends tools, so plain OpenAI/Azure users can't otherwise
+// reach these models. Matches gpt-5.4/5.5/5.6 with any non-mini/nano
+// suffix. -mini/-nano variants are excluded as unverified — they keep
+// chat/completions, and the OPENAI_API_FORMAT / profile apiFormat override
+// covers them if they turn out to need /responses. Two-digit minors
+// (gpt-5.10+) are deliberately unmatched: auto-routing unverified future
+// models is the exact risk this predicate exists to avoid. Bare gpt-5,
+// gpt-5-mini, gpt-4.x, o-series, and claude-* stay on chat/completions.
+export function modelRequiresResponsesApi(model: string): boolean {
+  const normalized = model.trim().toLowerCase().split('?', 1)[0] ?? ''
+  return /^gpt-5\.[4-6](?!\d)/.test(normalized) &&
+    !GPT5_MINI_NANO_RE.test(normalized)
+}
+
+// The gpt-5 family boundary: gpt-5, gpt-5-*, gpt-5.x — without matching
+// gpt-50-style ids. Shared by supportsCodexReasoningEffort and the Codex
+// profile model gate so the family shape lives in one place.
+const GPT5_FAMILY_RE = /^gpt-5(?:[.-]|$)/
+const GPT5_MINI_NANO_RE = /(?:^|[-.])(?:mini|nano)(?:[-.]|$)/
+
+// gpt-5 family models the ChatGPT Codex backend can serve. The -mini/-nano
+// tiers are API-only (never exposed through the Codex transport), so a
+// stale gpt-5-mini pick saved under a direct-OpenAI profile must fall back
+// to the Codex profile's default rather than be sent to the backend and 400.
+export function isCodexEligibleGpt5Model(model: string): boolean {
+  const base = model.trim().toLowerCase().split('?', 1)[0] ?? ''
+  return GPT5_FAMILY_RE.test(base) && !GPT5_MINI_NANO_RE.test(base)
+}
+
+// The responses auto-route only fires for the OpenAI first-party surface
+// (the default base, api.openai.com, and its OpenAI-controlled subdomains
+// like the eu./us. regional endpoints) and Azure OpenAI hosts, where
+// /v1/responses is known to exist. Arbitrary OpenAI-compatible gateways
+// (OpenRouter-style proxies) often lack it, so those keep chat/completions
+// unless the user opts in via OPENAI_API_FORMAT / apiFormat.
+function isDefaultOrDirectOpenAIBaseUrl(baseUrl: string | undefined): boolean {
+  if (!baseUrl || baseUrl === DEFAULT_OPENAI_BASE_URL) return true
+  try {
+    const hostname = new URL(baseUrl).hostname.toLowerCase()
+    return hostname === 'api.openai.com' || hostname.endsWith('.api.openai.com')
+  } catch {
+    return false
+  }
+}
+
+// Azure-style endpoint detection shared by the responses auto-route gate and
+// the shim's URL/auth handling. OPENAI_AZURE_STYLE=1 forces Azure handling
+// for endpoints whose hostname would not otherwise match (APIM-fronted,
+// private link); hostname-based otherwise (not raw URL) to prevent bypass
+// via path segments like https://evil.com/cognitiveservices.azure.com/.
+export function isAzureStyleBaseUrl(
+  baseUrl: string | undefined,
+  processEnv: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (isEnvTruthy(processEnv.OPENAI_AZURE_STYLE)) return true
+  if (!baseUrl) return false
+  try {
+    const hostname = new URL(baseUrl).hostname
+    return hostname.endsWith('.openai.azure.com') ||
+      hostname.endsWith('.cognitiveservices.azure.com') ||
+      hostname.endsWith('.services.ai.azure.com') ||
+      hostname.endsWith('.inference.ml.azure.com')
+  } catch {
+    return false
+  }
+}
+
+export function baseUrlSupportsResponsesAutoRoute(
+  baseUrl: string | undefined,
+  processEnv: NodeJS.ProcessEnv,
+): boolean {
+  return isDefaultOrDirectOpenAIBaseUrl(baseUrl) || isAzureStyleBaseUrl(baseUrl, processEnv)
+}
+
 export function isLocalProviderUrl(baseUrl: string | undefined): boolean {
   if (!baseUrl) return false
   try {
@@ -385,7 +551,7 @@ export function isLocalProviderUrl(baseUrl: string | undefined): boolean {
       hostname = hostname.slice(0, zoneIdIndex)
     }
 
-    if (LOCALHOST_HOSTNAMES.has(hostname) || hostname === '0.0.0.0') {
+    if (LOCALHOST_HOSTNAMES.has(hostname)) {
       return true
     }
     if (hostname.endsWith('.local')) {
@@ -503,6 +669,33 @@ export function isLikelyOllamaEndpoint(baseUrl: string | undefined): boolean {
     return (
       hostname.includes('ollama') ||
       pathname.includes('ollama')
+    )
+  } catch {
+    return false
+  }
+}
+
+export function isDirectLocalOllamaEndpoint(baseUrl: string | undefined): boolean {
+  if (!baseUrl) return false
+  try {
+    const parsed = new URL(baseUrl)
+    let hostname = parsed.hostname.toLowerCase()
+    if (hostname.startsWith('[') && hostname.endsWith(']')) {
+      hostname = hostname.slice(1, -1)
+    }
+    const ipv4Octets = hostname.split('.')
+    const isLoopbackIpv4 =
+      ipv4Octets.length === 4 &&
+      ipv4Octets.every(octet => /^\d{1,3}$/.test(octet) && Number(octet) <= 255) &&
+      ipv4Octets[0] === '127'
+    return (
+      parsed.protocol === 'http:' &&
+      parsed.port === '11434' &&
+      (
+        hostname === 'localhost' ||
+        hostname === '::1' ||
+        isLoopbackIpv4
+      )
     )
   } catch {
     return false
@@ -736,18 +929,7 @@ export function resolveProviderRequest(options?: {
   const isGithubMode = isEnvTruthy(processEnv.CLAUDE_CODE_USE_GITHUB)
   const isMistralMode = isEnvTruthy(processEnv.CLAUDE_CODE_USE_MISTRAL)
   const isGeminiMode = isEnvTruthy(processEnv.CLAUDE_CODE_USE_GEMINI)
-  const requestedModel =
-    options?.model?.trim() ||
-    (isMistralMode
-      ? processEnv.MISTRAL_MODEL?.trim()
-      : processEnv.OPENAI_MODEL?.trim()) ||
-    (isGeminiMode
-      ? processEnv.GEMINI_MODEL?.trim()
-      : processEnv.OPENAI_MODEL?.trim()) ||
-    options?.fallbackModel?.trim() ||
-    (isGeminiMode ? DEFAULT_GEMINI_MODEL : undefined) ||
-    (isGithubMode ? 'github:copilot' : 'codexplan')
-  const descriptor = parseModelDescriptor(requestedModel)
+  const isClinePassMode = Boolean(processEnv.CLINE_API_KEY?.trim())
   const explicitBaseUrl = asEnvUrl(options?.baseUrl)
 
   const normalizedMistralEnvBaseUrl = asNamedEnvUrl(
@@ -781,10 +963,41 @@ export function resolveProviderRequest(options?: {
       ? asNamedEnvUrl(processEnv.OPENAI_API_BASE, 'OPENAI_API_BASE')
       : undefined)
 
+  // ClinePass model selection is only valid when no concrete non-ClinePass
+  // base URL is explicitly provided via options or env. This prevents stale
+  // CLINE_API_KEY/CLINE_API_MODEL from overriding an explicit OPENAI_BASE_URL
+  // pointing at a different provider.
+  const concreteBaseUrlBeforeDefault =
+    explicitBaseUrl ?? primaryEnvBaseUrl ?? fallbackEnvBaseUrl
+  const hasConcreteNonClinePassBaseUrl =
+    Boolean(concreteBaseUrlBeforeDefault) && !isClinePassBaseUrl(concreteBaseUrlBeforeDefault)
+  const effectiveClinePassMode =
+    isClinePassMode && !isGithubMode && !hasConcreteNonClinePassBaseUrl
+  const clinePassDefaultModel = effectiveClinePassMode
+    ? getRouteDefaultModel('clinepass')
+    : undefined
+
+  const requestedModel =
+    options?.model?.trim() ||
+    (isMistralMode
+      ? processEnv.MISTRAL_MODEL?.trim()
+      : isGeminiMode
+        ? processEnv.GEMINI_MODEL?.trim()
+        : effectiveClinePassMode
+          ? processEnv.CLINE_API_MODEL?.trim() ||
+            processEnv.OPENAI_MODEL?.trim()
+          : processEnv.OPENAI_MODEL?.trim()) ||
+    options?.fallbackModel?.trim() ||
+    (isGeminiMode ? DEFAULT_GEMINI_MODEL : undefined) ||
+    clinePassDefaultModel ||
+    (isGithubMode ? 'github:copilot' : 'codexplan')
+  const descriptor = parseModelDescriptor(requestedModel)
+
   const envBaseUrlRaw =
     explicitBaseUrl ??
     primaryEnvBaseUrl ??
-    fallbackEnvBaseUrl
+    fallbackEnvBaseUrl ??
+    (effectiveClinePassMode ? DEFAULT_CLINEPASS_API_BASE_URL : undefined)
 
   const githubEnterpriseEnvUrl = asGithubEnterpriseEnvUrl(
     processEnv.GITHUB_ENTERPRISE_URL,
@@ -835,42 +1048,6 @@ export function resolveProviderRequest(options?: {
     ? normalizeGithubModelsApiModel(requestedModel)
     : requestedModel
 
-  // For GHE instances, build the Copilot API base URL from either
-  // GITHUB_ENTERPRISE_URL or an already-classified GHE OPENAI_BASE_URL.
-  const gheBaseUrl = isGithubGhe ? (gheUrl ?? rawBaseUrl) : undefined
-  const gheCopilotBaseUrl = gheBaseUrl
-    ? buildGithubEnterpriseCopilotBaseUrl(gheBaseUrl)
-    : undefined
-
-  const requestedApiFormat =
-    isGithubMode
-      ? undefined
-      : parseOpenAICompatibleApiFormat(options?.apiFormat) ??
-        parseOpenAICompatibleApiFormat(processEnv.OPENAI_API_FORMAT)
-  const supportsRequestedApiFormat =
-    (requestedApiFormat !== 'responses' && requestedApiFormat !== 'responses_compat') ||
-    (() => {
-      const runtimeShimContext = resolveOpenAIShimRuntimeContext({
-        processEnv,
-        baseUrl: finalBaseUrl,
-        model: descriptor.baseModel,
-        treatAsLocal: finalBaseUrl ? isLocalProviderUrl(finalBaseUrl) : false,
-      })
-
-      return openAIShimSupportsApiFormatForModel(
-        runtimeShimContext.openaiShimConfig,
-        'responses',
-        descriptor.baseModel,
-      )
-    })()
-  const transport: ProviderTransport =
-    shouldUseCodexTransport(requestedModel, finalBaseUrl) ||
-      (isGithubCopilotLike && shouldUseGithubResponsesApi(githubResolvedModel))
-      ? 'codex_responses'
-      : (requestedApiFormat === 'responses' || requestedApiFormat === 'responses_compat') && supportsRequestedApiFormat
-        ? requestedApiFormat
-        : 'chat_completions'
-
   // For GitHub Copilot API, normalize to real model ID (e.g., "github:copilot" -> "gpt-4o")
   // For GitHub Models/custom endpoints:
   //   - Normalize default alias (github:copilot -> gpt-4o)
@@ -879,11 +1056,116 @@ export function resolveProviderRequest(options?: {
     ? normalizeGithubCopilotModel(descriptor.baseModel)
     : (isGithubModels || isGithubCustom || isGithubGhe
       ? normalizeGithubModelsApiModel(descriptor.baseModel)
-      : descriptor.baseModel)
+      : resolveRouteCatalogAliasApiName({
+          model: descriptor.baseModel,
+          baseUrl: finalBaseUrl,
+          processEnv,
+        }))
 
-  const reasoning = options?.reasoningEffortOverride
+  // For GHE instances, build the Copilot API base URL from either
+  // GITHUB_ENTERPRISE_URL or an already-classified GHE OPENAI_BASE_URL.
+  const gheBaseUrl = isGithubGhe ? (gheUrl ?? rawBaseUrl) : undefined
+  const gheCopilotBaseUrl = gheBaseUrl
+    ? buildGithubEnterpriseCopilotBaseUrl(gheBaseUrl)
+    : undefined
+
+  const runtimeShimContext =
+    isGithubMode
+      ? null
+      : resolveOpenAIShimRuntimeContext({
+          processEnv,
+          baseUrl: finalBaseUrl,
+          model: resolvedModel,
+          treatAsLocal: finalBaseUrl ? isLocalProviderUrl(finalBaseUrl) : false,
+        })
+  const explicitBaseUrlRuntimeContext =
+    isGithubMode
+      ? null
+      : resolveOpenAIShimRuntimeContext({
+          processEnv,
+          baseUrl: finalBaseUrl,
+          model: resolvedModel,
+          treatAsLocal: finalBaseUrl ? isLocalProviderUrl(finalBaseUrl) : false,
+          preferBaseUrlRoute: true,
+        })
+  const explicitApiFormat =
+    isGithubMode
+      ? undefined
+      : parseOpenAICompatibleApiFormat(options?.apiFormat) ??
+        parseOpenAICompatibleApiFormat(processEnv.OPENAI_API_FORMAT)
+  const requiredApiFormat =
+    isGithubMode
+      ? undefined
+      : parseOpenAICompatibleApiFormat(runtimeShimContext?.openaiShimConfig.requiredApiFormat)
+  // An explicitly required chat-completions route cannot be switched to a
+  // different endpoint. Other catalog-required formats retain their existing
+  // precedence over an absent or chat-completions selection.
+  const autoResponsesApiFormat =
+    !isGithubMode &&
+    explicitApiFormat === undefined &&
+    requiredApiFormat === undefined &&
+    modelRequiresResponsesApi(resolvedModel) &&
+    baseUrlSupportsResponsesAutoRoute(finalBaseUrl, processEnv)
+      ? ('responses' as const)
+      : undefined
+  const requestedApiFormat =
+    requiredApiFormat === 'chat_completions'
+      ? requiredApiFormat
+      : requiredApiFormat &&
+          (explicitApiFormat === undefined || explicitApiFormat === 'chat_completions')
+        ? requiredApiFormat
+        : explicitApiFormat ??
+          autoResponsesApiFormat ??
+          parseOpenAICompatibleApiFormat(runtimeShimContext?.openaiShimConfig.defaultApiFormat)
+  const supportsRequestedApiFormat =
+    (requestedApiFormat !== 'responses' && requestedApiFormat !== 'responses_compat') ||
+    openAIShimSupportsApiFormatForModel(
+      runtimeShimContext?.openaiShimConfig,
+      'responses',
+      resolvedModel,
+    )
+  const transport: ProviderTransport =
+    shouldUseCodexTransport(requestedModel, finalBaseUrl) ||
+      (isGithubCopilotLike && shouldUseGithubResponsesApi(githubResolvedModel))
+      ? 'codex_responses'
+      : (requestedApiFormat === 'responses' || requestedApiFormat === 'responses_compat') && supportsRequestedApiFormat
+        ? requestedApiFormat
+        : 'chat_completions'
+
+  // The gpt-5.6 alias defaults are Codex-transport-only: off the Codex
+  // transport the 5.6 family's effort metadata is owned by the route catalog
+  // (#1961), and an OPENAI_API_BASE gateway must not inherit the first-party
+  // default. Explicit picks (the /effort override or a ?reasoning= query)
+  // still flow on every transport, and the older aliases (gpt-5.4/5.5,
+  // codexplan) keep the pre-5.6 legacy behavior of carrying their default
+  // effort everywhere.
+  const requestedReasoning = options?.reasoningEffortOverride
     ? { effort: options.reasoningEffortOverride }
-    : descriptor.reasoning
+    : descriptor.reasoningFromAlias &&
+        transport !== 'codex_responses' &&
+        /^gpt-5\.6/.test(descriptor.baseModel)
+      ? undefined
+      : descriptor.reasoning
+  const catalogReasoningLevels =
+    explicitBaseUrlRuntimeContext?.catalogEntry?.modelDescriptorId === 'k3' &&
+    explicitBaseUrlRuntimeContext.catalogEntry.reasoning?.wireFormat === 'reasoning_effort'
+      ? explicitBaseUrlRuntimeContext.catalogEntry.reasoning.levels
+      : undefined
+  const isK3 = catalogReasoningLevels?.includes('max') &&
+    explicitBaseUrlRuntimeContext?.catalogEntry?.modelDescriptorId === 'k3'
+  const normalizedReasoning =
+    isK3 && requestedReasoning?.effort !== undefined
+      ? { effort: KIMI_K3_REASONING_ALIASES[requestedReasoning.effort] }
+      : requestedReasoning
+  const supportsMaxReasoning =
+    catalogReasoningLevels?.includes('max') === true
+  const reasoning =
+    (normalizedReasoning?.effort === 'max' && !supportsMaxReasoning) ||
+      (catalogReasoningLevels !== undefined &&
+        normalizedReasoning?.effort !== undefined &&
+        !catalogReasoningLevels.includes(normalizedReasoning.effort))
+      ? undefined
+      : normalizedReasoning
 
   return {
     transport,
@@ -929,6 +1211,7 @@ export function getAdditionalModelOptionsCacheScope(): string | null {
   }
 
   const partition = hashCacheScopePartition({
+    apiKeys: normalizeCacheScopeHeaderValue(process.env.OPENAI_API_KEYS),
     apiKey: normalizeCacheScopeHeaderValue(process.env.OPENAI_API_KEY),
     authHeader: normalizeCacheScopeHeaderValue(process.env.OPENAI_AUTH_HEADER).toLowerCase(),
     authScheme: normalizeCacheScopeHeaderValue(process.env.OPENAI_AUTH_SCHEME).toLowerCase(),
@@ -1198,7 +1481,9 @@ export function getReasoningEffortForModel(model: string): ReasoningEffort | und
   const normalized = model.trim().toLowerCase()
   const base = normalized.split('?', 1)[0] ?? normalized
   const alias = base as CodexAlias
-  const aliasConfig = CODEX_ALIAS_MODELS[alias]
+  const aliasConfig = Object.hasOwn(CODEX_ALIAS_MODELS, alias)
+    ? CODEX_ALIAS_MODELS[alias]
+    : undefined
   return aliasConfig?.reasoningEffort
 }
 
@@ -1214,5 +1499,5 @@ export function supportsCodexReasoningEffort(model: string): boolean {
     return true
   }
 
-  return /^gpt-5(?:[.-]|$)/.test(base)
+  return GPT5_FAMILY_RE.test(base)
 }
