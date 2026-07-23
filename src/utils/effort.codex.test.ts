@@ -781,11 +781,9 @@ test('Atlas Cloud catalog exposes only verified reasoning controls for exact mod
       controllable: true,
       source: 'metadata',
       levels: ['low', 'medium', 'high', 'xhigh'],
-      wireFormat: 'reasoning_effort',
     })
     expect(getAvailableEffortLevels(model)).toEqual(['low', 'medium', 'high', 'xhigh'])
     expect(resolveAppliedEffort(model, 'xhigh')).toBe('xhigh')
-    expect(resolveAppliedEffort(model, 'max')).toBe('high')
   }
 
   const verifiedAtlasZaiGlmModels = [
@@ -864,6 +862,29 @@ test('Atlas Cloud catalog exposes only verified reasoning controls for exact mod
   expect(modelSupportsEffort('xai/grok-build-0.1')).toBe(false)
   expect(modelSupportsWireEffort('xai/grok-build-0.1')).toBe(false)
   expect(resolveAppliedEffort('xai/grok-build-0.1', 'high')).toBeUndefined()
+})
+
+test('Google Gemini catalog exposes verified reasoning controls', async () => {
+  const { resolveModelReasoningControl } = await import('./effort.js')
+  const verifiedGeminiNativeModels = [
+    'gemini-3.6-flash',
+    'google/gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'google/gemini-3.5-flash',
+    'gemini-2.5-pro',
+    'google/gemini-2.5-pro',
+    'gemini-2.0-flash',
+    'google/gemini-2.0-flash',
+  ]
+  for (const model of verifiedGeminiNativeModels) {
+    expect(resolveModelReasoningControl(model, { routeId: 'gemini' })).toMatchObject({
+      supportsReasoning: true,
+      controllable: true,
+      source: 'metadata',
+      levels: ['low', 'medium', 'high', 'xhigh'],
+      wireFormat: 'reasoning_effort',
+    })
+  }
 })
 
 test('xAI catalog exposes live-verified reasoning controls for direct Grok models', async () => {

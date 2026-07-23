@@ -1,5 +1,7 @@
 import { defineModel } from '../define.js'
 
+import type { ReasoningControlMetadata } from '../descriptors.js'
+
 const geminiCapabilities = {
   supportsVision: true,
   supportsStreaming: true,
@@ -7,6 +9,12 @@ const geminiCapabilities = {
   supportsJsonMode: true,
   supportsReasoning: true,
   supportsPreciseTokenCount: false,
+}
+
+const geminiReasoning: ReasoningControlMetadata = {
+  mode: 'levels',
+  levels: ['low', 'medium', 'high', 'xhigh'],
+  wireFormat: 'reasoning_effort',
 }
 
 function geminiModel(id: string, label: string, maxOutputTokens: number) {
@@ -18,6 +26,7 @@ function geminiModel(id: string, label: string, maxOutputTokens: number) {
     classification: ['chat', 'reasoning', 'vision', 'coding'],
     defaultModel: id,
     capabilities: geminiCapabilities,
+    reasoning: geminiReasoning,
     contextWindow: 1_048_576,
     maxOutputTokens,
   })

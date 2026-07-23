@@ -189,7 +189,7 @@ export const PROVIDER_PRESET_MANIFEST = [
     "routeKind": "vendor",
     "routeId": "gemini",
     "vendorId": "gemini",
-    "description": "Google AI / Gemini OpenAI-compatible endpoint",
+    "description": "Gemini OpenAI-compatible endpoint",
     "apiKeyEnvVars": [
       "GEMINI_API_KEY"
     ]

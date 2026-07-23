@@ -472,7 +472,7 @@ export async function getAnthropicClient({
     isEnvTruthy(process.env.CLAUDE_CODE_USE_GITHUB) ||
     isEnvTruthy(process.env.CLAUDE_CODE_USE_GEMINI) ||
     isEnvTruthy(process.env.CLAUDE_CODE_USE_MISTRAL) ||
-    (model && (model.startsWith('gemini-') || model.startsWith('gpt-') || model.startsWith('ministral-')))
+    (model && (model.startsWith('gemini-') || model.startsWith('google/gemini-') || model.startsWith('google/gemma-') || model.startsWith('gpt-') || model.startsWith('ministral-')))
   ) {
     const { createOpenAIShimClient } = await import('./openaiShim.js')
     return createOpenAIShimClient({

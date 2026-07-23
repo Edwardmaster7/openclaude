@@ -4801,8 +4801,11 @@ class OpenAIShimMessages {
       }
       if (params.temperature !== undefined) genConfig.temperature = params.temperature
       if (params.top_p !== undefined) genConfig.topP = params.top_p
-      if (request.reasoning?.effort) {
-        const level = request.reasoning.effort === 'xhigh' ? 'high' : request.reasoning.effort
+      const rawEffort = reasoningRequestPlan.reasoningEffort || request.reasoning?.effort
+      if (reasoningRequestPlan.thinkingType === 'disabled') {
+        genConfig.thinkingConfig = { thinkingBudget: 0 }
+      } else if (rawEffort) {
+        const level = rawEffort === 'xhigh' || rawEffort === 'max' ? 'high' : rawEffort
         genConfig.thinkingConfig = { includeThoughts: true, thinkingLevel: level }
       }
       if (Object.keys(genConfig).length > 0) {
