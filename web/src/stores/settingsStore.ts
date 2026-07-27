@@ -24,7 +24,7 @@ export interface SettingsState {
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
-    (set: SetState<SettingsState>): SettingsState => ({
+    (set: any): any => ({
       serverUrl: 'ws://localhost:50051',
       authToken: '',
       workingDirectory: '',

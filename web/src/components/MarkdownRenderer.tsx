@@ -66,10 +66,10 @@ function CodeBlock({
 
 export function MarkdownRenderer({ content }: MarkdownRendererProps) {
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      className="prose-chat"
-      components={{
+    <div className="prose-chat">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
         code({ className, children, ...props }: { className?: string; children?: React.ReactNode; [key: string]: unknown }) {
           const match = /language-(\w+)/.exec(className || '')
           const codeString = String(children).replace(/\n$/, '')
@@ -177,5 +177,6 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
     >
       {content}
     </ReactMarkdown>
+    </div>
   )
 }
