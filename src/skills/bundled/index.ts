@@ -7,6 +7,7 @@ import { registerKeybindingsSkill } from './keybindings.js'
 import { registerLoopSkill } from './loop.js'
 import { registerPdfSkill } from './pdf.js'
 import { registerSimplifySkill } from './simplify.js'
+import { registerStoneageSkills } from './stoneage.js'
 import { registerUpdateConfigSkill } from './updateConfig.js'
 
 /**
@@ -23,6 +24,7 @@ export function initBundledSkills(): void {
   registerKeybindingsSkill()
   registerDebugSkill()
   registerSimplifySkill()
+  registerStoneageSkills()
   registerPdfSkill()
   registerBatchSkill()
   if (feature('KAIROS') || feature('KAIROS_DREAM')) {
