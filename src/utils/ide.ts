@@ -103,6 +103,7 @@ export type IdeType =
   | 'cursor'
   | 'windsurf'
   | 'agy'
+  | 'antigravity'
   | 'vscode'
   | 'pycharm'
   | 'intellij'
@@ -144,6 +145,13 @@ const supportedIdeConfigs: Record<IdeType, IdeConfig> = {
     processKeywordsLinux: ['windsurf'],
   },
   agy: {
+    ideKind: 'vscode',
+    displayName: 'Antigravity',
+    processKeywordsMac: ['Antigravity Helper', 'Antigravity.app'],
+    processKeywordsWindows: ['antigravity.exe', 'agy.exe'],
+    processKeywordsLinux: ['antigravity', 'agy'],
+  },
+  antigravity: {
     ideKind: 'vscode',
     displayName: 'Antigravity',
     processKeywordsMac: ['Antigravity Helper', 'Antigravity.app'],

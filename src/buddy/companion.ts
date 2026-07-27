@@ -11,6 +11,9 @@ import {
   SPECIES,
   STAT_NAMES,
   type StatName,
+  type Species,
+  type StoredCompanion,
+  type Hat,
 } from './types.js'
 
 // Mulberry32 — tiny seeded PRNG, good enough for picking ducks
@@ -110,6 +113,14 @@ export function companionUserId(): string {
   return config.oauthAccount?.accountUuid ?? config.userID ?? 'anon'
 }
 
+let companionCache:
+  | {
+      stored: StoredCompanion
+      userId: string
+      value: Companion
+    }
+  | undefined
+
 // Regenerate bones from userId, merge with stored soul. Bones never persist
 // so species renames and SPECIES-array edits can't break stored companions,
 // and editing config.companion can't fake a rarity.
@@ -131,7 +142,8 @@ export function getCompanion(): Companion | undefined {
   const value: Companion = {
     ...bones,
     ...stored,
-    ...(override !== undefined ? { species: override } : {}),
+    species: (override ?? bones.species) as Species,
+    hat: (stored.hat ?? bones.hat) as Hat,
   }
   companionCache = { stored, userId, value }
   return value
