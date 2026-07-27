@@ -77,18 +77,20 @@ export function getQueryGuardOptionsFromEnv(
   env: EnvLike = process.env,
   log: DebugLogger = defaultWarnLogger,
 ): QueryGuardResolvedOptions {
+  // acceptZero = true: 0 means "disable this timeout entirely". Backwards
+  // compat: existing users who set positive values see no change.
   const hardMaxMs = resolvePositiveIntEnv(
     OPENCLAUDE_QUERY_HARD_MAX_MS_ENV,
     env[OPENCLAUDE_QUERY_HARD_MAX_MS_ENV],
     MAX_CONFIGURABLE_QUERY_HARD_MAX_MS,
-    false,
+    true,
     log,
   )
   const idleMs = resolvePositiveIntEnv(
     OPENCLAUDE_QUERY_IDLE_TIMEOUT_MS_ENV,
     env[OPENCLAUDE_QUERY_IDLE_TIMEOUT_MS_ENV],
     MAX_CONFIGURABLE_QUERY_IDLE_TIMEOUT_MS,
-    false,
+    true,
     log,
   )
   // Grace is additive on top of lease timeout, so 0 is a valid user choice.

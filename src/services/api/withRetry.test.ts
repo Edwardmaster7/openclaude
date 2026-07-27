@@ -801,7 +801,7 @@ describe('persistent retry cap', () => {
     process.env.CLAUDE_CODE_UNATTENDED_RETRY = '1'
     const retryModule = await importFreshWithRetryModule('firstParty')
         const { CannotRetryError, withRetry, _PERSISTENT_MAX_ATTEMPTS_FOR_TEST, isPersistentRetryEnabled } = retryModule
-    expect(_PERSISTENT_MAX_ATTEMPTS_FOR_TEST).toBe(100)
+    expect(_PERSISTENT_MAX_ATTEMPTS_FOR_TEST()).toBe(100)
 
     const retryableRateLimit = makeError({ 'retry-after': '1' })
             const operation = mock(async () => {

@@ -54,7 +54,6 @@ describe('query guard config', () => {
 
   test('ignores invalid query hard max values with a clear warning', () => {
     const invalidValues = [
-      '0',
       '-1',
       'NaN',
       '1.5',
@@ -80,6 +79,18 @@ describe('query guard config', () => {
       expect(warn.mock.calls[0]?.[0]).toContain(value)
       expect(warn.mock.calls[0]?.[1]).toEqual({ level: 'warn' })
     }
+  })
+
+  test('accepts 0 for query hard max (disables the watchdog)', () => {
+    const warn = vi.fn()
+
+    expect(
+      getQueryGuardOptionsFromEnv(
+        { OPENCLAUDE_QUERY_HARD_MAX_MS: '0' },
+        warn,
+      ),
+    ).toEqual({ hardMaxQueryMs: 0 })
+    expect(warn).not.toHaveBeenCalled()
   })
 
   test('uses defaults when query idle timeout env is absent or empty', () => {
@@ -119,7 +130,6 @@ describe('query guard config', () => {
 
   test('ignores invalid query idle timeout values with a clear warning', () => {
     const invalidValues = [
-      '0',
       '-1',
       'NaN',
       '1.5',
@@ -144,6 +154,18 @@ describe('query guard config', () => {
       )
       expect(warn.mock.calls[0]?.[0]).toContain(value)
     }
+  })
+
+  test('accepts 0 for query idle timeout (disables the watchdog)', () => {
+    const warn = vi.fn()
+
+    expect(
+      getQueryGuardOptionsFromEnv(
+        { [OPENCLAUDE_QUERY_IDLE_TIMEOUT_MS_ENV]: '0' },
+        warn,
+      ),
+    ).toEqual({ idleTimeoutMs: 0 })
+    expect(warn).not.toHaveBeenCalled()
   })
 
   test('accepts zero for tool lease grace (additive on top of lease timeout)', () => {
