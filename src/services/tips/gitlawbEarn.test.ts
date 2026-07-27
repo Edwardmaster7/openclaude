@@ -11,7 +11,6 @@ function setAds(ads: { enabled: boolean; earnCode?: string } | undefined): void 
   saveGlobalConfig(c => ({ ...c, ads }))
 }
 
-<<<<<<< HEAD
 const ORIGINAL_ADS_BASE_URL = process.env.ADS_BASE_URL
 const ORIGINAL_TIP_EVERY = process.env.OPENCLAUDE_ADS_TIP_EVERY
 const ORIGINAL_FETCH = globalThis.fetch

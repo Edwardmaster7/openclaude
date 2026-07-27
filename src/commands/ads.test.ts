@@ -56,8 +56,7 @@ describe('/ads command', () => {
     expect(getGlobalConfig().ads?.enabled).toBeFalsy()
   })
 
-<<<<<<< HEAD
-  test('"off" disables earning and clears the stored code', async () => {
+  test('"off" disables earning and clears the stored code', async () =>>,old_string: {
     saveGlobalConfig(c => ({ ...c, ads: { enabled: true, earnCode: 'x' } }))
     const { text } = await run('off')
     expect(text?.toLowerCase()).toContain('disabled')

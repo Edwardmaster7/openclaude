@@ -85,13 +85,10 @@ function AdsCodeDialog({
       <Text dimColor>
         Paste your earn code (gitlawb.com/opengateway → Earn). It stays hidden as you type.
       </Text>
-<<<<<<< HEAD
       <Text dimColor>
         Tips are contextual: your most recent prompt (with best-effort secret redaction)
         is shared with our ad partner to match a relevant tip. Disable any time with /ads off.
       </Text>
-=======
->>>>>>> upstream/main
       <Box flexDirection="row" gap={1}>
         <Text>›</Text>
         <TextInput
