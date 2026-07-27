@@ -803,7 +803,7 @@ function createDefaultGlobalConfig(): GlobalConfig {
     geminiContextCachingEnabled: false,
     geminiContextCachingTtl: 900,
     geminiContextCachingThreshold: 0,
-    replMaxTurns: 50,
+    replMaxTurns: 0,
     forkMaxTurns: 200,
     // Omitted by default so callers can distinguish "unset" from an explicit
     // persisted "off"; normalizeMaxMessagesCompactionThreshold resolves an

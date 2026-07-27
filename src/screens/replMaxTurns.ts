@@ -2,7 +2,7 @@ import { getGlobalConfig } from '../utils/config.js'
 
 // Default local interactive REPL cap. Configured via global config
 // (config.replMaxTurns). 0 means "no limit".
-export const DEFAULT_REPL_MAX_TURNS = 50
+export const DEFAULT_REPL_MAX_TURNS = 0
 
 export function resolveReplMaxTurns(maxTurns?: number | null): number {
   const resolved = maxTurns ?? (() => {
