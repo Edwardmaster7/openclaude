@@ -42,14 +42,32 @@ async function runSkillsList(args: string[]): Promise<{
     mkdirSync(projectDir)
     mkdirSync(homeDir)
 
+    const cleanEnv = { ...process.env }
+    for (const key of Object.keys(cleanEnv)) {
+      if (
+        (key.startsWith('CLAUDE_CODE_USE_') && key !== 'CLAUDE_CODE_USE_OPENAI') ||
+        key.startsWith('NVIDIA_') ||
+        key.startsWith('GEMINI_') ||
+        key.startsWith('MISTRAL_') ||
+        key.startsWith('ANTHROPIC_') ||
+        key.startsWith('DEEPSEEK_') ||
+        key.startsWith('OLLAMA_') ||
+        key === 'CLINE_API_KEY'
+      ) {
+        delete cleanEnv[key]
+      }
+    }
+
     const proc = Bun.spawn({
       cmd: [process.execPath, cliEntrypoint, ...args],
       cwd: projectDir,
       env: {
-        ...process.env,
+        ...cleanEnv,
         CLAUDE_CODE_USE_OPENAI: '1',
         OPENAI_BASE_URL: 'https://api.openai.com/v1',
         OPENAI_API_KEY: '',
+        OPENAI_API_KEYS: '',
+        OPENCLAUDE_MAX_RETRIES: '0',
         CLAUDE_CONFIG_DIR: configDir,
         HOME: homeDir,
         OPENCLAUDE_DISABLE_EARLY_INPUT: '1',
@@ -115,6 +133,11 @@ async function runSkillsList(args: string[]): Promise<{
         timeout,
       ])
 
+      if (exitCode !== 0) {
+        console.error('COMMAND FAIL:', args, 'EXIT:', exitCode)
+        console.error('STDOUT:', stdout)
+        console.error('STDERR:', stderr)
+      }
       return { exitCode, stderr, stdout }
     } finally {
       if (watchdog) clearTimeout(watchdog)

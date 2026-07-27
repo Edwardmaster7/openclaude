@@ -1,7 +1,15 @@
-import { BROWSER_TOOLS } from '@ant/claude-for-chrome-mcp'
 import { BASE_CHROME_PROMPT } from '../../utils/claudeInChrome/prompt.js'
 import { registerBundledSkill } from '../bundledSkills.js'
 import { shouldEnableClaudeInChromeSkill } from './claudeInChromeAccess.js'
+import { createRequire } from 'module'
+const require = createRequire(import.meta.url)
+
+let BROWSER_TOOLS: Array<{ name: string }> = []
+try {
+  BROWSER_TOOLS = require('@ant/claude-for-chrome-mcp').BROWSER_TOOLS
+} catch {
+  // Ignora se o módulo não estiver instalado (ambiente de desenvolvimento aberto)
+}
 
 const CLAUDE_IN_CHROME_MCP_TOOLS = BROWSER_TOOLS.map(
   tool => `mcp__claude-in-chrome__${tool.name}`,
