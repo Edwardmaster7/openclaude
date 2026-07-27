@@ -19,7 +19,6 @@ afterEach(() => {
   if (ORIGINAL_ADS_BASE_URL === undefined) delete process.env.ADS_BASE_URL
   else process.env.ADS_BASE_URL = ORIGINAL_ADS_BASE_URL
 })
-
 type RunResult = { text: string | undefined; node: React.ReactNode }
 
 async function run(args: string): Promise<RunResult> {
@@ -57,6 +56,7 @@ describe('/ads command', () => {
     expect(getGlobalConfig().ads?.enabled).toBeFalsy()
   })
 
+<<<<<<< HEAD
   test('"off" disables earning and clears the stored code', async () => {
     saveGlobalConfig(c => ({ ...c, ads: { enabled: true, earnCode: 'x' } }))
     const { text } = await run('off')

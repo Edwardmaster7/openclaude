@@ -11,6 +11,7 @@ function setAds(ads: { enabled: boolean; earnCode?: string } | undefined): void 
   saveGlobalConfig(c => ({ ...c, ads }))
 }
 
+<<<<<<< HEAD
 const ORIGINAL_ADS_BASE_URL = process.env.ADS_BASE_URL
 const ORIGINAL_TIP_EVERY = process.env.OPENCLAUDE_ADS_TIP_EVERY
 const ORIGINAL_FETCH = globalThis.fetch
@@ -34,7 +35,6 @@ afterEach(() => {
   if (ORIGINAL_TIP_EVERY === undefined) delete process.env.OPENCLAUDE_ADS_TIP_EVERY
   else process.env.OPENCLAUDE_ADS_TIP_EVERY = ORIGINAL_TIP_EVERY
 })
-
 describe('gitlawb earning tips', () => {
   test('disabled by default (no ads config)', () => {
     setAds(undefined)
@@ -74,7 +74,6 @@ describe('gitlawb earning tips', () => {
     const text = await buildEarningTip().content({ theme: 'dark' })
     expect(text.toLowerCase()).toContain('gitlawb.com')
   })
-
   test('content renders a fetched ad (advertiser + ad copy) on the success path', async () => {
     setAds({ enabled: true, earnCode: 'earn_abc' })
     globalThis.fetch = (async (_input: unknown, _init?: RequestInit) =>

@@ -25,10 +25,10 @@ export const providers: Provider[] = [
   },
   {
     id: 'gemini',
-    name: 'Google AI / Gemini',
+    name: 'Google Gemini',
     setup: '/provider or env vars',
     envVars: ['GOOGLE_API_KEY'],
-    notes: 'Supports API key, access token, and local ADC auth.',
+    notes: 'Supports API-key auth only.',
   },
   {
     id: 'github-models',

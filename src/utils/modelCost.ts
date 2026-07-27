@@ -12,7 +12,6 @@ import {
   CLAUDE_OPUS_4_5_CONFIG,
   CLAUDE_OPUS_4_6_CONFIG,
   CLAUDE_OPUS_4_7_CONFIG,
-  CLAUDE_OPUS_4_8_CONFIG,
   CLAUDE_OPUS_4_CONFIG,
   CLAUDE_SONNET_4_5_CONFIG,
   CLAUDE_SONNET_4_6_CONFIG,
@@ -21,6 +20,7 @@ import {
 import {
   firstPartyNameToCanonical,
   getCanonicalName,
+  getDefaultMainLoopModelSetting,
   type ModelShortName,
 } from './model/model.js'
 
@@ -87,6 +87,95 @@ export const COST_HAIKU_45 = {
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
 
+// Gemini 3.1 Pro (Low Context <= 200k)
+export const COST_GEMINI_3_1_PRO_LOW = {
+  inputTokens: 2,
+  outputTokens: 12,
+  promptCacheWriteTokens: 2.5,
+  promptCacheReadTokens: 0.5,
+  webSearchRequests: 0.01,
+} as const satisfies ModelCosts
+
+// Gemini 3.1 Pro (High Context > 200k)
+export const COST_GEMINI_3_1_PRO_HIGH = {
+  inputTokens: 4,
+  outputTokens: 18,
+  promptCacheWriteTokens: 5,
+  promptCacheReadTokens: 1,
+  webSearchRequests: 0.01,
+} as const satisfies ModelCosts
+
+// Gemini 3.6 Flash
+export const COST_GEMINI_3_6_FLASH = {
+  inputTokens: 1.5,
+  outputTokens: 7.5,
+  promptCacheWriteTokens: 0.75,
+  promptCacheReadTokens: 0.15,
+  webSearchRequests: 0.01,
+} as const satisfies ModelCosts
+
+// Gemini 3.5 Flash
+export const COST_GEMINI_3_5_FLASH = {
+  inputTokens: 0.5,
+  outputTokens: 3,
+  promptCacheWriteTokens: 0.625,
+  promptCacheReadTokens: 0.125,
+  webSearchRequests: 0.01,
+} as const satisfies ModelCosts
+
+// Gemini 3 Flash
+export const COST_GEMINI_3_FLASH = {
+  inputTokens: 0.5,
+  outputTokens: 3,
+  promptCacheWriteTokens: 0.625,
+  promptCacheReadTokens: 0.125,
+  webSearchRequests: 0.01,
+} as const satisfies ModelCosts
+
+// Gemini 3 Flash-Lite
+export const COST_GEMINI_3_FLASH_LITE = {
+  inputTokens: 0.25,
+  outputTokens: 1.5,
+  promptCacheWriteTokens: 0.3125,
+  promptCacheReadTokens: 0.0625,
+  webSearchRequests: 0.01,
+} as const satisfies ModelCosts
+
+// Gemini 2.5 Pro (Low Context <= 128k)
+export const COST_GEMINI_2_5_PRO_LOW = {
+  inputTokens: 1.25,
+  outputTokens: 10,
+  promptCacheWriteTokens: 1.5625,
+  promptCacheReadTokens: 0.3125,
+  webSearchRequests: 0.01,
+} as const satisfies ModelCosts
+
+// Gemini 2.5 Pro (High Context > 128k)
+export const COST_GEMINI_2_5_PRO_HIGH = {
+  inputTokens: 2.5,
+  outputTokens: 15,
+  promptCacheWriteTokens: 3.125,
+  promptCacheReadTokens: 0.625,
+  webSearchRequests: 0.01,
+} as const satisfies ModelCosts
+
+// Gemini 2.5 Flash
+export const COST_GEMINI_2_5_FLASH = {
+  inputTokens: 0.3,
+  outputTokens: 2.5,
+  promptCacheWriteTokens: 0.375,
+  promptCacheReadTokens: 0.075,
+  webSearchRequests: 0.01,
+} as const satisfies ModelCosts
+
+// Gemini 2.0 Flash
+export const COST_GEMINI_2_0_FLASH = {
+  inputTokens: 0.1,
+  outputTokens: 0.4,
+  promptCacheWriteTokens: 0.125,
+  promptCacheReadTokens: 0.025,
+  webSearchRequests: 0.01,
+} as const satisfies ModelCosts
 const DEFAULT_UNKNOWN_MODEL_COST = COST_TIER_5_25
 
 /**
@@ -128,6 +217,15 @@ export const MODEL_COSTS: Record<ModelShortName, ModelCosts> = {
     COST_TIER_5_25,
   [firstPartyNameToCanonical(CLAUDE_OPUS_4_8_CONFIG.firstParty)]:
     COST_TIER_5_25,
+  'gemini-3.6-flash': COST_GEMINI_3_6_FLASH,
+  'google/gemini-3.6-flash': COST_GEMINI_3_6_FLASH,
+  'gemini-3.5-flash': COST_GEMINI_3_5_FLASH,
+  'gemini-3.1-pro-preview': COST_GEMINI_3_1_PRO_LOW,
+  'gemini-3-flash-preview': COST_GEMINI_3_FLASH,
+  'gemini-3.1-flash-lite-preview': COST_GEMINI_3_FLASH_LITE,
+  'gemini-2.5-pro': COST_GEMINI_2_5_PRO_LOW,
+  'gemini-2.5-flash': COST_GEMINI_2_5_FLASH,
+  'gemini-2.0-flash': COST_GEMINI_2_0_FLASH,
 }
 
 /**
@@ -149,13 +247,8 @@ function tokensToUSDCost(modelCosts: ModelCosts, usage: Usage): number {
 export function getModelCosts(model: string, usage: Usage): ModelCosts {
   const shortName = getCanonicalName(model)
 
-  // Check if this is a fast-mode-capable Opus model (4.8/4.7/4.6) with fast mode
-  // active. These share the elevated fast-mode pricing the picker advertises, so
-  // the tracked cost must match the displayed price for the current default
-  // (4.8). Non-fast usage stays COST_TIER_5_25, same as the MODEL_COSTS entry.
+  // Check if this is an Opus 4.6 model with fast mode active.
   if (
-    shortName === firstPartyNameToCanonical(CLAUDE_OPUS_4_8_CONFIG.firstParty) ||
-    shortName === firstPartyNameToCanonical(CLAUDE_OPUS_4_7_CONFIG.firstParty) ||
     shortName === firstPartyNameToCanonical(CLAUDE_OPUS_4_6_CONFIG.firstParty)
   ) {
     const isFastMode = usage.speed === 'fast'
@@ -165,7 +258,10 @@ export function getModelCosts(model: string, usage: Usage): ModelCosts {
   const costs = MODEL_COSTS[shortName]
   if (!costs) {
     trackUnknownModelCost(model, shortName)
-    return DEFAULT_UNKNOWN_MODEL_COST
+    return (
+      MODEL_COSTS[getCanonicalName(getDefaultMainLoopModelSetting())] ??
+      DEFAULT_UNKNOWN_MODEL_COST
+    )
   }
   return costs
 }
@@ -180,8 +276,7 @@ function trackUnknownModelCost(model: string, shortName: ModelShortName): void {
 }
 
 // Calculate the cost of a query in US dollars.
-// Unknown models use the explicit unknown-model estimate and are marked in
-// session state; they must never inherit an unrelated configured default.
+// If the model's costs are not found, use the default model's costs.
 export function calculateUSDCost(resolvedModel: string, usage: Usage): number {
   const modelCosts = getModelCosts(resolvedModel, usage)
   return tokensToUSDCost(modelCosts, usage)

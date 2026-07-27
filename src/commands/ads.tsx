@@ -5,6 +5,7 @@ import { useTerminalSize } from '../hooks/useTerminalSize.js'
 import type { Command } from '../commands.js'
 import type { LocalJSXCommandCall } from '../types/command.js'
 import { getGlobalConfig, saveGlobalConfig } from '../utils/config.js'
+import { confirmTip, fetchNextTip } from '../services/ads.js'
 
 function statusText(): string {
   const ads = getGlobalConfig().ads
@@ -23,16 +24,13 @@ function statusText(): string {
   ].join('\n')
 }
 
-/**
- * Persist the code and return the confirmation message. Earning happens only on
- * the per-turn rendered-tip path (a viewer must actually see a tip to be
- * credited); we intentionally do NOT fetch/confirm an unshown impression here.
- */
+/** Persist the code + warm one impression in the background, return a message. */
 function enableWithCode(code: string): string {
   saveGlobalConfig(c => ({
     ...c,
     ads: { ...(c.ads ?? {}), enabled: true, earnCode: code },
   }))
+  void warmOneEarn(code)
   return [
     "Sponsored tips enabled — you'll see them during loading and earn",
     'opengateway credits each time. Your recent prompt (with best-effort secret',
@@ -41,6 +39,19 @@ function enableWithCode(code: string): string {
   ].join('\n')
 }
 
+/** Fire-and-forget first earn so a credit lands shortly after enabling. */
+function warmOneEarn(code: string): Promise<void> {
+  return (async () => {
+    try {
+      const tip = await fetchNextTip(code)
+      if (!tip) return
+      await new Promise(resolve => setTimeout(resolve, Math.min(tip.dwellMs, 8000)))
+      await confirmTip(code, tip.token)
+    } catch {
+      /* ads must never break the CLI */
+    }
+  })()
+}
 /**
  * Masked paste dialog for the earn code — same UX as entering a provider API
  * key (TextInput mask="*"), so the credential never appears in plaintext.
@@ -74,10 +85,13 @@ function AdsCodeDialog({
       <Text dimColor>
         Paste your earn code (gitlawb.com/opengateway → Earn). It stays hidden as you type.
       </Text>
+<<<<<<< HEAD
       <Text dimColor>
         Tips are contextual: your most recent prompt (with best-effort secret redaction)
         is shared with our ad partner to match a relevant tip. Disable any time with /ads off.
       </Text>
+=======
+>>>>>>> upstream/main
       <Box flexDirection="row" gap={1}>
         <Text>›</Text>
         <TextInput

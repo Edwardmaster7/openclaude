@@ -422,8 +422,63 @@ function getCodexSparkOption(): ModelOption {
   }
 }
 
+function getGeminiModelOptions(): ModelOption[] {
+  return [
+    {
+      value: 'gemini-3.6-flash',
+      label: 'Gemini 3.6 Flash',
+      description: 'Ultra-fast & highly capable · Latest Gemini 3.6 Flash model',
+    },
+    {
+      value: 'gemini-3.1-pro-preview',
+      label: 'Gemini 3.1 Pro Preview',
+      description: 'Frontier reasoning · Most capable for complex work',
+    },
+    {
+      value: 'gemini-2.5-pro',
+      label: 'Gemini 2.5 Pro',
+      description: 'Balanced performance · Best for everyday coding tasks',
+    },
+    {
+      value: 'gemini-3.5-flash',
+      label: 'Gemini 3.5 Flash',
+      description: 'Ultra-fast & highly capable · Latest Gemini 3.5 Flash model',
+    },
+    {
+      value: 'gemini-3-flash-preview',
+      label: 'Gemini 3 Flash',
+      description: 'High speed · Optimal for fast iterative development',
+    },
+    {
+      value: 'gemini-3.1-flash-lite-preview',
+      label: 'Gemini 3 Flash-Lite',
+      description: 'Fastest & cheapest · Built for high-volume tasks',
+    },
+    {
+      value: 'gemini-2.0-flash',
+      label: 'Gemini 2.0 Flash',
+      description: 'Stable generation model',
+    }
+  ]
+}
+
 function getCodexModelOptions(): ModelOption[] {
   return [
+    {
+      value: 'gpt-5.6-sol',
+      label: 'gpt-5.6-sol',
+      description: 'GPT-5.6 Sol · Flagship for complex work, high reasoning',
+    },
+    {
+      value: 'gpt-5.6-terra',
+      label: 'gpt-5.6-terra',
+      description: 'GPT-5.6 Terra · Balanced everyday workhorse',
+    },
+    {
+      value: 'gpt-5.6-luna',
+      label: 'gpt-5.6-luna',
+      description: 'GPT-5.6 Luna · Fast and cost-effective',
+    },
     {
       value: 'gpt-5.5',
       label: 'gpt-5.5',
@@ -521,6 +576,14 @@ function getModelOptionsBase(fastMode = false): ModelOption[] {
   const inactiveProfileOptions: ModelOption[] = profileEnvApplied
     ? getInactiveProviderProfileOptions(activeProfileId)
     : []
+
+  if (getAPIProvider() === 'gemini') {
+    return [
+      getDefaultOptionForUser(fastMode),
+      ...getGeminiModelOptions(),
+      ...inactiveProfileOptions,
+    ]
+  }
 
   if (getAPIProvider() === 'github') {
     return [
@@ -902,14 +965,23 @@ function mergeModelOptionsByNormalizedValue(
   return merged
 }
 
+function getCatalogOptionValue(entry: { id: string; apiName: string }, entries: readonly { apiName: string }[]): string {
+  const apiName = entry.apiName.trim()
+  const duplicateApiName = entries.filter(candidate =>
+    candidate.apiName.trim().toLowerCase() === apiName.toLowerCase(),
+  ).length > 1
+  return duplicateApiName ? entry.id.trim() : apiName
+}
+
 function getActiveOpenAIRouteCatalogOptions(): ModelOption[] {
   const routeId = getActiveOpenAIRouteId()
   if (!routeId) {
     return []
   }
 
-  return getCatalogEntriesForRoute(routeId).flatMap(entry => {
-    const value = entry.apiName.trim()
+  const entries = getCatalogEntriesForRoute(routeId)
+  return entries.flatMap(entry => {
+    const value = getCatalogOptionValue(entry, entries)
     if (!value) {
       return []
     }
@@ -937,7 +1009,8 @@ function getRouteCatalogModelOption(value: ModelSetting): ModelOption | null {
     return null
   }
 
-  const catalogEntry = getCatalogEntriesForRoute(routeId).find(entry =>
+  const entries = getCatalogEntriesForRoute(routeId)
+  const catalogEntry = entries.find(entry =>
     normalizeRouteModelOptionKey(entry.apiName) === normalizedValue ||
     normalizeRouteModelOptionKey(entry.id) === normalizedValue ||
     (entry.aliases ?? []).some(
@@ -949,7 +1022,7 @@ function getRouteCatalogModelOption(value: ModelSetting): ModelOption | null {
   }
 
   return {
-    value: catalogEntry.apiName,
+    value: getCatalogOptionValue(catalogEntry, entries),
     label: catalogEntry.label ?? catalogEntry.apiName,
     description: catalogEntry.apiName,
   }
@@ -1018,7 +1091,27 @@ export function getModelOptions(fastMode = false): ModelOption[] {
     return filterModelOptionsByAllowlist([...options, getCodexPlanOption()])
   } else if (customModel === 'gpt-5.3-codex-spark') {
     return filterModelOptionsByAllowlist([...options, getCodexSparkOption()])
-  } else if (customModel === 'opus' && getAPIProvider() === 'firstParty' && isFirstPartyAnthropicBaseUrl()) {
+  }
+
+  // Persisted Codex model while a non-Codex provider is active (the Codex
+  // options were not appended above): surface the curated option instead
+  // of a generic "Custom model" entry, mirroring the gpt-5.5/spark cases
+  // for every Codex picker model. Match on the [1m]-stripped base so a
+  // tagged pick still gets its curated entry, but keep the persisted value
+  // on the option so selection matching stays exact.
+  const customCodexBase = customModel.replace(/\[1m]$/i, '')
+  const customCodexOption = getCodexModelOptions().find(
+    opt => opt.value === customCodexBase,
+  )
+  if (customCodexOption) {
+    return filterModelOptionsByAllowlist([
+      ...options,
+      customCodexBase === customModel
+        ? customCodexOption
+        : { ...customCodexOption, value: customModel },
+    ])
+  }
+  if (customModel === 'opus' && getAPIProvider() === 'firstParty' && isFirstPartyAnthropicBaseUrl()) {
     return filterModelOptionsByAllowlist([
       ...options,
       getMaxOpusOption(fastMode),

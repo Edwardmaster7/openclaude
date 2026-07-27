@@ -10,6 +10,7 @@ import figures from 'figures';
 import { type GlobalConfig, saveGlobalConfig, getCurrentProjectConfig, type OutputStyle, MAX_MESSAGES_COMPACTION_THRESHOLDS, normalizeMaxMessagesCompactionThreshold } from '../../utils/config.js';
 import { normalizeApiKeyForConfig } from '../../utils/authPortable.js';
 import { getGlobalConfig, getAutoUpdaterDisabledReason, formatAutoUpdaterDisabledReason, getRemoteControlAtStartup } from '../../utils/config.js';
+import { normalizeCompactTailTurns } from '../../utils/relevancePruning.js';
 import chalk from 'chalk';
 import { getModeColor, permissionModeTitle, permissionModeFromString, toExternalPermissionMode, isExternalPermissionMode, PERMISSION_MODES, type ExternalPermissionMode, type PermissionMode } from '../../utils/permissions/PermissionMode.js';
 import { getAutoModeEnabledState, hasAutoModeOptInAnySource, transitionPlanAutoMode } from '../../utils/permissions/permissionSetup.js';
@@ -309,6 +310,29 @@ export function Config({
       });
       logEvent('tengu_max_messages_compaction_threshold_changed', {
         threshold: normalizedThreshold as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
+      });
+    }
+  }, {
+    id: 'compactTailTurns',
+    label: 'Compaction: recent messages kept',
+    // Display and persist through the SAME normalization autoCompact applies,
+    // so a hand-edited 2.5 or 0 shows (and saves) as what actually runs.
+    value: String(normalizeCompactTailTurns(globalConfig.compactTailTurns)),
+    // Include a hand-edited config value so it round-trips through the picker.
+    options: [...new Set(['2', '3', '5', '8', String(normalizeCompactTailTurns(globalConfig.compactTailTurns))])],
+    type: 'enum' as const,
+    onChange(compactTailTurnsValue: string) {
+      const compactTailTurns = normalizeCompactTailTurns(compactTailTurnsValue);
+      saveGlobalConfig(current => ({
+        ...current,
+        compactTailTurns
+      }));
+      setGlobalConfig({
+        ...getGlobalConfig(),
+        compactTailTurns
+      });
+      logEvent('tengu_compact_tail_turns_changed', {
+        value: compactTailTurnsValue as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
       });
     }
   }, {
@@ -1029,6 +1053,48 @@ export function Config({
       });
     }
   }, {
+    id: 'replMaxTurns',
+    label: 'Max turns in REPL (CLI)',
+    value: (globalConfig.replMaxTurns ?? 50).toString(),
+    options: ['10', '20', '50', '100', '200', '500'],
+    type: 'enum' as const,
+    onChange(val: string) {
+      const parsed = parseInt(val, 10);
+      const limit = isNaN(parsed) ? undefined : parsed;
+      saveGlobalConfig(current => {
+        if (current.replMaxTurns === limit) return current;
+        return {
+          ...current,
+          replMaxTurns: limit
+        };
+      });
+      setGlobalConfig({
+        ...getGlobalConfig(),
+        replMaxTurns: limit
+      });
+    }
+  }, {
+    id: 'forkMaxTurns',
+    label: 'Max turns in background agents (Forks)',
+    value: (globalConfig.forkMaxTurns ?? 200).toString(),
+    options: ['50', '100', '200', '500', '1000'],
+    type: 'enum' as const,
+    onChange(val: string) {
+      const parsed = parseInt(val, 10);
+      const limit = isNaN(parsed) ? undefined : parsed;
+      saveGlobalConfig(current => {
+        if (current.forkMaxTurns === limit) return current;
+        return {
+          ...current,
+          forkMaxTurns: limit
+        };
+      });
+      setGlobalConfig({
+        ...getGlobalConfig(),
+        forkMaxTurns: limit
+      });
+    }
+  }, {
     id: 'prStatusFooterEnabled',
     label: 'Show PR status footer',
     value: globalConfig.prStatusFooterEnabled ?? true,
@@ -1387,6 +1453,9 @@ export function Config({
       const threshold = normalizeMaxMessagesCompactionThreshold(globalConfig.maxMessagesCompactionThreshold);
       formattedChanges.push(threshold === 'off' ? 'Disabled message-count compaction' : `Set message-count compaction to ${threshold}`);
     }
+    if (globalConfig.compactTailTurns !== initialConfig.current.compactTailTurns) {
+      formattedChanges.push(`Set compaction recent messages kept to ${normalizeCompactTailTurns(globalConfig.compactTailTurns)}`);
+    }
     if (globalConfig.toolHistoryCompressionEnabled !== initialConfig.current.toolHistoryCompressionEnabled) {
       formattedChanges.push(`${globalConfig.toolHistoryCompressionEnabled ? 'Enabled' : 'Disabled'} tool history compression`);
     }
@@ -1420,6 +1489,12 @@ export function Config({
     }
     if (settingsData?.autoUpdatesChannel !== initialSettingsData.current?.autoUpdatesChannel) {
       formattedChanges.push(`Set auto-update channel to ${chalk.bold(settingsData?.autoUpdatesChannel ?? 'latest')}`);
+    }
+    if (globalConfig.replMaxTurns !== initialConfig.current.replMaxTurns) {
+      formattedChanges.push(`Set max turns in REPL (CLI) to ${chalk.bold(globalConfig.replMaxTurns ?? '50')}`);
+    }
+    if (globalConfig.forkMaxTurns !== initialConfig.current.forkMaxTurns) {
+      formattedChanges.push(`Set max turns in background agents to ${chalk.bold(globalConfig.forkMaxTurns ?? '200')}`);
     }
     if (formattedChanges.length > 0) {
       onClose(formattedChanges.join('\n'));

@@ -84,10 +84,6 @@ export const kage = c(0x6b, 0x61, 0x67, 0x65) as 'kage'
 export const ember = c(0x65, 0x6d, 0x62, 0x65, 0x72) as 'ember'
 export const corsair = c(0x63, 0x6f, 0x72, 0x73, 0x61, 0x69, 0x72) as 'corsair'
 
-// The deterministic hatch pool — every hero form. NEVER reorder or grow
-// this list casually: pick(rng, SPECIES) depends on SPECIES.length and
-// ordering, so any change re-rolls every existing user's hatched species
-// (their speciesOverride, if set, still wins).
 export const SPECIES = [
   duck,
   goose,
@@ -236,6 +232,14 @@ export const SPECIES_COLORS: Record<
   [ember]: 'error',
   [corsair]: 'permission',
 }
+
+export const RARITY_STARS = {
+  common: '★',
+  uncommon: '★★',
+  rare: '★★★',
+  epic: '★★★★',
+  legendary: '★★★★★',
+} as const satisfies Record<Rarity, string>
 
 export const RARITY_COLORS = {
   common: 'inactive',

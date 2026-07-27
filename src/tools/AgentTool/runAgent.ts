@@ -13,7 +13,7 @@ import type { QuerySource } from '../../constants/querySource.js'
 import { getSystemContext, getUserContext } from '../../context.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import { query } from '../../query.js'
-import type { Terminal } from '../../query/transitions.js'
+import { getGlobalConfig } from '../../utils/config.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
 import { getDumpPromptsPath } from '../../services/api/dumpPrompts.js'
 import { cleanupAgentTracking } from '../../services/api/promptCacheBreakDetection.js'
@@ -255,7 +255,6 @@ export async function* runAgent({
   override,
   model,
   maxTurns,
-  maxSteps,
   preserveToolUseResults,
   availableTools,
   allowedTools,
@@ -288,7 +287,6 @@ export async function* runAgent({
   }
   model?: string
   maxTurns?: number
-  maxSteps?: number
   /** Preserve toolUseResult on messages for subagents with viewable transcripts */
   preserveToolUseResults?: boolean
   /** Precomputed tool pool for the worker agent. Computed by the caller
@@ -790,15 +788,7 @@ export async function* runAgent({
   let lastRecordedUuid: UUID | null = initialMessages.at(-1)?.uuid ?? null
 
   try {
-    let queryTerminal: Terminal | undefined
-    const configuredMaxSteps =
-      Number.isSafeInteger(maxSteps) && maxSteps! > 0
-        ? maxSteps
-        : Number.isSafeInteger(agentDefinition.maxSteps) &&
-            agentDefinition.maxSteps! > 0
-          ? agentDefinition.maxSteps
-          : undefined
-    const queryIterator = query({
+    for await (const message of query({
       messages: initialMessages,
       systemPrompt: agentSystemPrompt,
       userContext: resolvedUserContext,
@@ -806,75 +796,56 @@ export async function* runAgent({
       canUseTool,
       toolUseContext: agentToolUseContext,
       querySource,
-      maxTurns: maxTurns ?? agentDefinition.maxTurns,
-      agentStepLimit:
-        configuredMaxSteps !== undefined
-          ? {
-              maxSteps: configuredMaxSteps,
-              agentType: agentDefinition.agentType,
-            }
-          : undefined,
-    })[Symbol.asyncIterator]()
+      maxTurns: maxTurns ?? (agentDefinition.agentType === 'fork' ? getGlobalConfig().forkMaxTurns ?? agentDefinition.maxTurns : agentDefinition.maxTurns),
+    })) {
+      onQueryProgress?.()
+      // Forward subagent API request starts to parent's metrics display
+      // so TTFT/OTPS update during subagent execution.
+      if (
+        message.type === 'stream_event' &&
+        message.event.type === 'message_start' &&
+        message.ttftMs != null
+      ) {
+        toolUseContext.pushApiMetricsEntry?.(message.ttftMs)
+        continue
+      }
 
-    try {
-      while (true) {
-        const next = await queryIterator.next()
-        if (next.done) {
-          queryTerminal = next.value
+      // Yield attachment messages (e.g., structured_output) without recording them
+      if (message.type === 'attachment') {
+        // Handle max turns reached signal from query.ts
+        if (message.attachment.type === 'max_turns_reached') {
+          logForDebugging(
+            `[Agent
+: $
+{
+  agentDefinition.agentType
+}
+] Reached max turns limit ($
+{
+  message.attachment.maxTurns
+}
+)`,
+          )
           break
         }
-
-        const message = next.value
-        onQueryProgress?.()
-        // Forward subagent API request starts to parent's metrics display
-        // so TTFT/OTPS update during subagent execution.
-        if (
-          message.type === 'stream_event' &&
-          message.event.type === 'message_start' &&
-          message.ttftMs != null
-        ) {
-          toolUseContext.pushApiMetricsEntry?.(message.ttftMs)
-          continue
-        }
-
-        // Yield attachment messages (e.g., structured_output) without recording them
-        if (message.type === 'attachment') {
-          // Handle max turns reached signal from query.ts
-          if (message.attachment.type === 'max_turns_reached') {
-            logForDebugging(
-              `[Agent: ${agentDefinition.agentType}] Reached max turns limit (${message.attachment.maxTurns})`,
-            )
-            break
-          }
-          yield message
-          continue
-        }
-
-        if (isRecordableMessage(message)) {
-          // Record only the new message with correct parent (O(1) per message)
-          await recordSidechainTranscript(
-            [message],
-            agentId,
-            lastRecordedUuid,
-          ).catch(err =>
-            logForDebugging(`Failed to record sidechain transcript: ${err}`),
-          )
-          if (message.type !== 'progress') {
-            lastRecordedUuid = message.uuid
-          }
-          yield message
-        }
+        yield message
+        continue
       }
-    } finally {
-      if (queryTerminal === undefined) {
-        await queryIterator.return?.(undefined as never)
-      }
-    }
 
-    if (queryTerminal?.reason === 'agent_step_limit') {
-      logForDebugging(
-        `[Agent: ${agentDefinition.agentType}] Stopped after reaching maxSteps (${queryTerminal.stepsUsed}/${queryTerminal.maxSteps})`,
-      )
+      if (isRecordableMessage(message)) {
+        // Record only the new message with correct parent (O(1) per message)
+        await recordSidechainTranscript(
+          [message],
+          agentId,
+          lastRecordedUuid,
+        ).catch(err =>
+          logForDebugging(`Failed to record sidechain transcript: ${err}`),
+        )
+        if (message.type !== 'progress') {
+          lastRecordedUuid = message.uuid
+        }
+        yield message
+      }
     }
 
     if (agentAbortController.signal.aborted) {

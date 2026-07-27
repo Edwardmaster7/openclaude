@@ -1,4 +1,4 @@
-﻿import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chdir } from 'node:process'
@@ -583,6 +583,31 @@ describe('builtInCommandNames', () => {
 
   test('includes the /dream command', () => {
     expect(builtInCommandNames()).toContain('dream')
+  })
+
+  test('dynamically filters login and logout commands based on 3P services usage', async () => {
+    const originalUseGemini = process.env.CLAUDE_CODE_USE_GEMINI
+    try {
+      // 1. When not using 3P services, login and logout should be present
+      delete process.env.CLAUDE_CODE_USE_GEMINI
+      const cmdsWith1P = await getCommands(process.cwd())
+      const namesWith1P = cmdsWith1P.map(c => c.name)
+      expect(namesWith1P).toContain('login')
+      expect(namesWith1P).toContain('logout')
+
+      // 2. When using 3P services, login and logout should be filtered out
+      process.env.CLAUDE_CODE_USE_GEMINI = 'true'
+      const cmdsWith3P = await getCommands(process.cwd())
+      const namesWith3P = cmdsWith3P.map(c => c.name)
+      expect(namesWith3P).not.toContain('login')
+      expect(namesWith3P).not.toContain('logout')
+    } finally {
+      if (originalUseGemini !== undefined) {
+        process.env.CLAUDE_CODE_USE_GEMINI = originalUseGemini
+      } else {
+        delete process.env.CLAUDE_CODE_USE_GEMINI
+      }
+    }
   })
 })
 

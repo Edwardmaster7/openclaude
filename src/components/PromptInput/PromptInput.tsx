@@ -239,7 +239,6 @@ function PromptInput({
   voiceInterimRange
 }: Props): React.ReactNode {
   const mainLoopModel = useMainLoopModel();
-  const { trackActivity } = useBuddyNotification();
   // A local-jsx command (e.g., /mcp while agent is running) renders a full-
   // screen dialog on top of PromptInput via the immediate-command path with
   // shouldHidePromptInput: false. Those dialogs don't register in the overlay
@@ -996,7 +995,6 @@ function PromptInput({
     setSuggestionsStateRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
   }, []);
   const onSubmit = useCallback(async (inputParam: string, isSubmittingSlashCommand = false, slashCommandOverride?: Command) => {
-    trackActivity();
     inputParam = inputParam.trimEnd();
 
     // Don't submit if a footer indicator is being opened. Read fresh from
@@ -1119,7 +1117,7 @@ function PromptInput({
     }, undefined, slashCommandOverride ? {
       slashCommandOverride
     } : undefined);
-  }, [promptSuggestionState, speculation, speculationSessionTimeSavedMs, teamContext, store, footerItems, suggestionsState.suggestions, onSubmitProp, onAgentSubmit, clearBuffer, resetHistory, logOutcomeAtSubmission, setAppState, markAccepted, pastedContents, removeNotification, trackActivity]);
+  }, [promptSuggestionState, speculation, speculationSessionTimeSavedMs, teamContext, store, footerItems, suggestionsState.suggestions, onSubmitProp, onAgentSubmit, clearBuffer, resetHistory, logOutcomeAtSubmission, setAppState, markAccepted, pastedContents, removeNotification]);
   const {
     suggestions,
     selectedSuggestion,
@@ -2056,33 +2054,30 @@ function PromptInput({
   // Memoized callbacks for model picker to prevent re-renders when unrelated
   // state (like notifications) changes. This prevents the inline model picker
   // from visually "jumping" when notifications arrive.
-  const handleModelSelect = useCallback((model: string | null, effort: EffortLevel | undefined) => {
+  const handleModelSelect = useCallback((model: string | null, _effort: EffortLevel | undefined) => {
+    let wasFastModeDisabled = false;
     setAppState(prev => {
-      const isFast = model ? isFastModeSupportedByModel(model) && prev.fastMode : false;
-      const wasFastModeDisabled = isFastModeEnabled() && !isFastModeSupportedByModel(model) && !!prev.fastMode;
+      wasFastModeDisabled = isFastModeEnabled() && !isFastModeSupportedByModel(model) && !!prev.fastMode;
       return {
         ...prev,
         mainLoopModel: model,
         ...(model !== null ? { mainLoopModelForSession: model } : {}),
-        effortValue: effort !== undefined ? toPersistableEffort(effort) : prev.effortValue,
-        fastMode: wasFastModeDisabled ? false : isFast
+        effortValue: _effort !== undefined ? toPersistableEffort(_effort) : prev.effortValue,
+        // Turn off fast mode if switching to a model that doesn't support it
+        ...(wasFastModeDisabled && {
+          fastMode: false
+        })
       };
     });
     setShowModelPicker(false);
-
-    // Calculate message for notification
-    const effectiveFastMode = isFastMode ?? false;
-    const modelSupportedFast = isFastModeSupportedByModel(model);
-    const wasFastDisabled = isFastModeEnabled() && !modelSupportedFast && effectiveFastMode;
-
+    const effectiveFastMode = (isFastMode ?? false) && !wasFastModeDisabled;
     let message = `Model set to ${modelDisplayString(model)}`;
     if (isBilledAsExtraUsage(model, effectiveFastMode, isOpus1mMergeEnabled())) {
       message += ' · Billed as extra usage';
     }
-    if (wasFastDisabled) {
+    if (wasFastModeDisabled) {
       message += ' · Fast mode OFF';
     }
-
     addNotification({
       key: 'model-switched',
       jsx: <Text>{message}</Text>,

@@ -22,7 +22,7 @@ import {
   execSyncWithDefaults_DEPRECATED,
 } from './execFileNoThrow.js'
 import { getFsImplementation } from './fsOperations.js'
-import { getAncestorPidsAsync, getAncestorCommandsAsync } from './genericProcessUtils.js'
+import { getAncestorPidsAsync } from './genericProcessUtils.js'
 import { isJetBrainsPluginInstalledCached } from './jetbrains.js'
 import { logError } from './log.js'
 import { getPlatform } from './platform.js'
@@ -100,7 +100,6 @@ export type DetectedIDEInfo = {
 }
 
 export type IdeType =
-  | 'antigravity'
   | 'cursor'
   | 'windsurf'
   | 'agy'
@@ -130,13 +129,6 @@ type IdeConfig = {
 }
 
 const supportedIdeConfigs: Record<IdeType, IdeConfig> = {
-  antigravity: {
-    ideKind: 'vscode',
-    displayName: 'Antigravity',
-    processKeywordsMac: ['Antigravity IDE Helper', 'Antigravity IDE.app'],
-    processKeywordsWindows: ['antigravity-ide.exe'],
-    processKeywordsLinux: ['antigravity-ide'],
-  },
   cursor: {
     ideKind: 'vscode',
     displayName: 'Cursor',
@@ -964,7 +956,7 @@ async function getInstalledVSCodeExtensionVersion(
   return null
 }
 
-async function getVSCodeIDECommandByParentProcess(): Promise<string | null> {
+function getVSCodeIDECommandByParentProcess(): string | null {
   try {
     const platform = getPlatform()
 
@@ -974,16 +966,22 @@ async function getVSCodeIDECommandByParentProcess(): Promise<string | null> {
       return null
     }
 
-    // Fetch ancestor process commands asynchronously using a single sh/ps chain invocation
-    // which has a strict timeout of 3000ms.
-    const commands = await getAncestorCommandsAsync(process.ppid, 10)
+    let pid = process.ppid
 
-    for (const command of commands) {
+    // Walk up the process tree to find the actual app
+    for (let i = 0; i < 10; i++) {
+      if (!pid || pid === 0 || pid === 1) break
+
+      // Get the command for this PID
+      // this function already returned if not running on macos
+      const command = execSyncWithDefaults_DEPRECATED(
+        // eslint-disable-next-line custom-rules/no-direct-ps-commands
+        `ps -o command= -p ${pid}`,
+      )?.trim()
+
       if (command) {
-        const trimmedCommand = command.trim()
         // Check for known applications and extract the path up to and including .app
         const appNames = {
-          'Antigravity IDE.app': 'antigravity-ide',
           'Visual Studio Code.app': 'code',
           'Cursor.app': 'cursor',
           'Windsurf.app': 'windsurf',
@@ -993,19 +991,30 @@ async function getVSCodeIDECommandByParentProcess(): Promise<string | null> {
         const pathToExecutable = '/Contents/MacOS/Electron'
 
         for (const [appName, executableName] of Object.entries(appNames)) {
-          const appIndex = trimmedCommand.indexOf(appName + pathToExecutable)
+          const appIndex = command.indexOf(appName + pathToExecutable)
           if (appIndex !== -1) {
             // Extract the path from the beginning to the end of the .app name
             const folderPathEnd = appIndex + appName.length
             // These are all known VSCode variants with the same structure
             return (
-              trimmedCommand.substring(0, folderPathEnd) +
+              command.substring(0, folderPathEnd) +
               '/Contents/Resources/app/bin/' +
               executableName
             )
           }
         }
       }
+
+      // Get parent PID
+      // this function already returned if not running on macos
+      const ppidStr = execSyncWithDefaults_DEPRECATED(
+        // eslint-disable-next-line custom-rules/no-direct-ps-commands
+        `ps -o ppid= -p ${pid}`,
+      )?.trim()
+      if (!ppidStr) {
+        break
+      }
+      pid = parseInt(ppidStr.trim())
     }
 
     return null
@@ -1014,7 +1023,7 @@ async function getVSCodeIDECommandByParentProcess(): Promise<string | null> {
   }
 }
 async function getVSCodeIDECommand(ideType: IdeType): Promise<string | null> {
-  const parentExecutable = await getVSCodeIDECommandByParentProcess()
+  const parentExecutable = getVSCodeIDECommandByParentProcess()
   if (parentExecutable) {
     // Verify the parent executable actually exists
     try {

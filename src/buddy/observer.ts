@@ -768,7 +768,7 @@ export async function fireCompanionObserver(
 
   for (const msg of messages as Array<{ type?: string; message?: any }>) {
     let toolResultBlocks: any[] = [];
-    if (msg.type === "tool_result") {
+    if ((msg.type as string) === "tool_result") {
       toolResultBlocks = [msg];
     } else if (
       msg.type === "user" &&
