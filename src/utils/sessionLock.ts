@@ -13,10 +13,13 @@ function getLockFilePath(projectDir: string): string {
   return join(projectDir, 'active-session.json')
 }
 
+const activeLockProjectDirs = new Set<string>()
+
 export async function saveActiveSessionLock(
   sessionId: string,
   projectDir: string,
 ): Promise<void> {
+  activeLockProjectDirs.add(projectDir)
   await mkdir(projectDir, { recursive: true })
   const state: ActiveSessionState = {
     sessionId,
@@ -26,6 +29,12 @@ export async function saveActiveSessionLock(
     cleanExit: false,
   }
   await writeFile(getLockFilePath(projectDir), JSON.stringify(state, null, 2), 'utf-8')
+}
+
+export async function markAllCleanExit(): Promise<void> {
+  for (const dir of Array.from(activeLockProjectDirs)) {
+    await markCleanExit(dir)
+  }
 }
 
 export async function updateSessionLockTimestamp(projectDir: string): Promise<void> {

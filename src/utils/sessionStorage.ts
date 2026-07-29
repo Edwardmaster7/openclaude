@@ -28,6 +28,7 @@ import {
   getReplayIndexBuilder,
   getSessionId,
   getSessionProjectDir,
+  onSessionSwitch,
   switchSession,
 } from '../bootstrap/state.js'
 import { COMMAND_NAME_TAG, TICK_TAG } from '../constants/xml.js'
@@ -66,6 +67,12 @@ import type {
 import type { QueueOperationMessage } from '../types/messageQueueTypes.js'
 import { uniq } from './array.js'
 import { registerCleanup } from './cleanupRegistry.js'
+import {
+  saveActiveSessionLock,
+  updateSessionLockTimestamp,
+  markCleanExit,
+  markAllCleanExit,
+} from './sessionLock.js'
 import { updateSessionName } from './concurrentSessions.js'
 import { getCwd } from './cwd.js'
 import { logForDebugging } from './debug.js'
@@ -443,6 +450,24 @@ export function isCustomTitleEnabled(): boolean {
 // cache clear needed.
 export const getProjectDir = memoize((projectDir: string): string => {
   return join(getProjectsDir(), sanitizePath(projectDir))
+})
+
+export async function initSessionLock(
+  sessionId: string = getSessionId(),
+  projectDir: string = getSessionProjectDir() ?? getProjectDir(getOriginalCwd()),
+): Promise<void> {
+  await saveActiveSessionLock(sessionId, projectDir)
+}
+
+onSessionSwitch((sessionId) => {
+  const projectDir = getSessionProjectDir() ?? getProjectDir(getOriginalCwd())
+  void saveActiveSessionLock(sessionId, projectDir)
+})
+
+registerCleanup(async () => {
+  const projectDir = getSessionProjectDir() ?? getProjectDir(getOriginalCwd())
+  await markCleanExit(projectDir)
+  await markAllCleanExit()
 })
 
 let project: Project | null = null
@@ -1220,6 +1245,9 @@ class Project {
     if (this.shouldSkipPersistence()) {
       return
     }
+
+    const lockProjectDir = getSessionProjectDir() ?? getProjectDir(getOriginalCwd())
+    void updateSessionLockTimestamp(lockProjectDir)
 
     const currentSessionId = getSessionId() as UUID
     const isCurrentSession = sessionId === currentSessionId
