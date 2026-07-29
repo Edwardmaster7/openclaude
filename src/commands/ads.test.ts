@@ -86,4 +86,16 @@ describe('/ads command', () => {
     expect(getGlobalConfig().ads?.enabled).toBeFalsy()
     expect(text?.toLowerCase()).toContain('cancel')
   })
+
+  test('status shows formatted balance and context rules when enabled', async () => {
+    saveGlobalConfig(c => ({
+      ...c,
+      ads: { enabled: true, earnCode: 'earn_123456789', lastBalanceMicro: 1250000 },
+    }))
+    const { text } = await run('')
+    expect(text).toContain('Sponsored tips: on')
+    expect(text).toContain('Last known balance: $1.250000 USD')
+    expect(text?.toLowerCase()).toContain('dynamic tip rotation')
+    expect(text?.toLowerCase()).toContain('technology context')
+  })
 })

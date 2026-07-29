@@ -23,6 +23,7 @@ function statusText(): string {
   return [
     `Sponsored tips: on  (earn code ${masked})${balanceText}`,
     'You earn opengateway credits when a tip is shown during loading.',
+    'Dynamic tip rotation and project technology context targeting are active.',
     'Turn off any time with "/ads off".',
   ].join('\n')
 }
