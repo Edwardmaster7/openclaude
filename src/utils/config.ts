@@ -476,6 +476,7 @@ export type GlobalConfig = {
   ads?: {
     enabled: boolean
     earnCode?: string // issued in the opengateway Earn tab, sent as x-earn-code
+    lastBalanceMicro?: number
   }
 
   // Plan mode usage tracking

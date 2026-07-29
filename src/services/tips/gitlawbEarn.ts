@@ -1,5 +1,6 @@
 import { color } from '../../components/design-system/color.js'
-import { getGlobalConfig } from '../../utils/config.js'
+import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js'
+import { registerCleanup } from '../../utils/cleanupRegistry.js'
 import { confirmTip, fetchNextTip } from '../ads.js'
 import { renderSponsorLink } from './tipLink.js'
 import type { Tip, TipContext, TipSponsor } from './types.js'
@@ -34,6 +35,17 @@ function tipEvery(): number {
 
 // Per-session pick counter (resets each process start).
 let pickCounter = 0
+const seenImpressionIds = new Set<string>()
+
+// Track active confirm operations (promises)
+const activeConfirms = new Set<Promise<void>>()
+
+// ponytail: register cleanup to await active confirms during graceful shutdown
+registerCleanup(async () => {
+  if (activeConfirms.size > 0) {
+    await Promise.all(Array.from(activeConfirms))
+  }
+})
 
 /**
  * Whether this tip slot should be a Gitlawb earning ad. Called once per turn by
@@ -50,6 +62,11 @@ export function shouldShowEarningTip(): boolean {
 /** Test seam: reset the per-session cadence counter. */
 export function resetEarningCadenceForTesting(): void {
   pickCounter = 0
+}
+
+/** Test seam: clear seen impression IDs. */
+export function resetSeenImpressionsForTesting(): void {
+  seenImpressionIds.clear()
 }
 
 function renderEarningTip(
@@ -99,18 +116,38 @@ export function buildEarningTip(): Tip {
       // sponsored tips disclosed this sharing; ads.ts sanitizes it first.
       // fetchNextTip is contractually non-throwing (it catches everything and
       // returns null), so no try/catch is needed at this call site.
-      const tip = await fetchNextTip(code, 'openclaude', ctx.latestUserMessage)
+      const tip = await fetchNextTip(code, 'openclaude', ctx.latestUserMessage, {
+        seenImpressionIds: Array.from(seenImpressionIds),
+      })
       // A malformed/empty ad payload must not render a blank line and then
       // credit a never-seen ad — degrade to the static fallback instead.
       if (!tip || !tip.text.trim()) return renderEarningTip(fallback, ctx, false)
 
+      if (tip.impressionId) {
+        seenImpressionIds.add(tip.impressionId)
+      }
+
       const delay = Math.max(0, Math.min(tip.dwellMs, MAX_CONFIRM_DELAY_MS))
-      // unref'd so this best-effort confirm never keeps a short-lived CLI run
-      // alive for up to the dwell window.
-      const timer = setTimeout(() => {
-        void confirmTip(code, tip.token).catch(() => {})
-      }, delay)
-      ;(timer as { unref?: () => void }).unref?.()
+      // ponytail: keep-alive via active Promise (no unref) & track for graceful shutdown
+      const confirmPromise = (async () => {
+        await new Promise(resolve => setTimeout(resolve, delay))
+        try {
+          const res = await confirmTip(code, tip.token)
+          if (res.balanceMicro !== undefined) {
+            saveGlobalConfig(c => ({
+              ...c,
+              ads: { ...(c.ads ?? {}), enabled: true, lastBalanceMicro: res.balanceMicro }
+            }))
+          }
+        } catch {
+          // Swallow errors — earning is best-effort
+        }
+      })()
+
+      activeConfirms.add(confirmPromise)
+      void confirmPromise.finally(() => {
+        activeConfirms.delete(confirmPromise)
+      })
 
       return renderEarningTip(tip.text, ctx, true, { name: tip.name, link: tip.link })
     },

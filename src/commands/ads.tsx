@@ -5,7 +5,7 @@ import { useTerminalSize } from '../hooks/useTerminalSize.js'
 import type { Command } from '../commands.js'
 import type { LocalJSXCommandCall } from '../types/command.js'
 import { getGlobalConfig, saveGlobalConfig } from '../utils/config.js'
-import { confirmTip, fetchNextTip } from '../services/ads.js'
+import { confirmTip, fetchNextTip, validateEarnCode } from '../services/ads.js'
 
 function statusText(): string {
   const ads = getGlobalConfig().ads
@@ -17,8 +17,11 @@ function statusText(): string {
     ].join('\n')
   }
   const masked = ads.earnCode ? `${ads.earnCode.slice(0, 6)}…` : '(none)'
+  const balanceText = ads.lastBalanceMicro !== undefined
+    ? `\nLast known balance: $${(ads.lastBalanceMicro / 1_000_000).toFixed(6)} USD`
+    : ''
   return [
-    `Sponsored tips: on  (earn code ${masked})`,
+    `Sponsored tips: on  (earn code ${masked})${balanceText}`,
     'You earn opengateway credits when a tip is shown during loading.',
     'Turn off any time with "/ads off".',
   ].join('\n')
@@ -67,10 +70,12 @@ function AdsCodeDialog({
 }): React.ReactNode {
   const [value, setValue] = React.useState('')
   const [cursorOffset, setCursorOffset] = React.useState(0)
+  const [isValidating, setIsValidating] = React.useState(false)
+  const [errorMsg, setErrorMsg] = React.useState('')
   const { columns } = useTerminalSize()
 
   useInput((_input, key) => {
-    if (key.escape) onCancel()
+    if (key.escape && !isValidating) onCancel()
   })
 
   return (
@@ -89,24 +94,42 @@ function AdsCodeDialog({
         Tips are contextual: your most recent prompt (with best-effort secret redaction)
         is shared with our ad partner to match a relevant tip. Disable any time with /ads off.
       </Text>
+      {errorMsg ? <Text color="error">{errorMsg}</Text> : null}
       <Box flexDirection="row" gap={1}>
-        <Text>›</Text>
-        <TextInput
-          value={value}
-          onChange={setValue}
-          cursorOffset={cursorOffset}
-          onChangeCursorOffset={setCursorOffset}
-          columns={Math.max(20, columns - 8)}
-          mask="*"
-          placeholder="earn_…"
-          onSubmit={v => {
-            const code = v.trim()
-            if (code) onSubmit(code)
-            else onCancel()
-          }}
-        />
+        <Text>{isValidating ? '⟳' : '›'}</Text>
+        {isValidating ? (
+          <Text dimColor>Validating earn code...</Text>
+        ) : (
+          <TextInput
+            value={value}
+            onChange={setValue}
+            cursorOffset={cursorOffset}
+            onChangeCursorOffset={setCursorOffset}
+            columns={Math.max(20, columns - 8)}
+            mask="*"
+            placeholder="earn_…"
+            onSubmit={async v => {
+              const code = v.trim()
+              if (!code) {
+                onCancel()
+                return
+              }
+              setIsValidating(true)
+              setErrorMsg('')
+              const res = await validateEarnCode(code)
+              setIsValidating(false)
+              if (res.valid) {
+                onSubmit(code)
+              } else {
+                setErrorMsg(res.error ?? 'Validation failed.')
+              }
+            }}
+          />
+        )}
       </Box>
-      <Text dimColor>enter to enable · esc to cancel</Text>
+      <Text dimColor>
+        {isValidating ? 'validating...' : 'enter to enable · esc to cancel'}
+      </Text>
     </Box>
   )
 }

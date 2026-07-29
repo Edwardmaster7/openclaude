@@ -4,6 +4,7 @@ import {
   adsEarningEnabled,
   shouldShowEarningTip,
   resetEarningCadenceForTesting,
+  resetSeenImpressionsForTesting,
   buildEarningTip,
 } from './gitlawbEarn.js'
 
@@ -19,6 +20,7 @@ let originalAds = getGlobalConfig().ads
 beforeEach(() => {
   originalAds = getGlobalConfig().ads
   resetEarningCadenceForTesting()
+  resetSeenImpressionsForTesting()
   // Unreachable host → fetchNextTip fails fast and content() degrades to the
   // static fallback, so these tests never hit the network.
   process.env.ADS_BASE_URL = 'http://127.0.0.1:0'
@@ -105,5 +107,47 @@ describe('gitlawb earning tips', () => {
 
     const text = await buildEarningTip().content({ theme: 'dark' })
     expect(text.toLowerCase()).toContain('gitlawb.com') // degraded to static line
+  })
+
+  test('tracks seenImpressionIds across fetches and passes to fetchNextTip', async () => {
+    setAds({ enabled: true, earnCode: 'earn_abc' })
+    const capturedBodies: any[] = []
+
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      if (init?.body) {
+        capturedBodies.push(JSON.parse(String(init.body)))
+      }
+      const count = capturedBodies.length
+      return new Response(
+        JSON.stringify({
+          impression_id: `imp_${count}`,
+          token: `tok_${count}`,
+          tip_text: `Tip ${count} content text`,
+          name: 'Sponsor',
+          link: 'https://example.com',
+          dwell_ms: 1000,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    }) as typeof fetch
+
+    // First fetch
+    await buildEarningTip().content({ theme: 'dark' })
+    expect(capturedBodies[0].seen_impression_ids).toBeUndefined()
+
+    // Second fetch - should pass seen_impression_ids containing imp_1
+    await buildEarningTip().content({ theme: 'dark' })
+    expect(capturedBodies[1].seen_impression_ids).toEqual(['imp_1'])
+
+    // Third fetch - should pass seen_impression_ids containing imp_1, imp_2
+    await buildEarningTip().content({ theme: 'dark' })
+    expect(capturedBodies[2].seen_impression_ids).toEqual(['imp_1', 'imp_2'])
+
+    // Reset for testing
+    resetSeenImpressionsForTesting()
+
+    // Fourth fetch - should be cleared
+    await buildEarningTip().content({ theme: 'dark' })
+    expect(capturedBodies[3].seen_impression_ids).toBeUndefined()
   })
 })
