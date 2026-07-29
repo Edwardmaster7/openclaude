@@ -32,6 +32,7 @@ import type { CompanionShop } from '../buddy/types.js'
 import { normalizePathForConfigKey } from './path.js'
 import { getEssentialTrafficOnlyReason } from './privacyLevel.js'
 import { getManagedFilePath } from './settings/managedPath.js'
+import type { AutoResumeOnCrashOption } from './settings/types.js'
 import type { ThemeSetting } from './theme.js'
 import { PRIMARY_PROJECT_INSTRUCTION_FILE } from './projectInstructions.js'
 
@@ -750,6 +751,7 @@ export type GlobalConfig = {
 
   replMaxTurns?: number
   forkMaxTurns?: number
+  autoResumeOnCrash?: AutoResumeOnCrashOption
 }
 
 /**
@@ -806,6 +808,7 @@ function createDefaultGlobalConfig(): GlobalConfig {
     geminiContextCachingThreshold: 0,
     replMaxTurns: 0,
     forkMaxTurns: 200,
+    autoResumeOnCrash: 'prompt',
     // Omitted by default so callers can distinguish "unset" from an explicit
     // persisted "off"; normalizeMaxMessagesCompactionThreshold resolves an
     // unset value to the effective default of '200' (message-count compaction
@@ -872,6 +875,7 @@ export const GLOBAL_CONFIG_KEYS = [
   'geminiContextCachingThreshold',
   'replMaxTurns',
   'forkMaxTurns',
+  'autoResumeOnCrash',
 ] as const
 
 export type GlobalConfigKey = (typeof GLOBAL_CONFIG_KEYS)[number]

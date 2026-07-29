@@ -969,6 +969,10 @@ export const SettingsSchema = lazySchema(() =>
         .enum(['latest', 'stable'])
         .optional()
         .describe('Release channel for auto-updates (latest or stable)'),
+      autoResumeOnCrash: z
+        .enum(['prompt', 'always', 'never'])
+        .optional()
+        .describe('Automatically resume session on crash ("prompt", "always", or "never")'),
       ...(feature('LODESTONE')
         ? {
             disableDeepLinkRegistration: z
@@ -1327,6 +1331,8 @@ export type AllowedMcpServerEntry = z.infer<
 export type DeniedMcpServerEntry = z.infer<
   ReturnType<typeof DeniedMcpServerEntrySchema>
 >
+export type AutoResumeOnCrashOption = 'prompt' | 'always' | 'never'
+
 export type SettingsJson = z.infer<ReturnType<typeof SettingsSchema>>
 
 /**
