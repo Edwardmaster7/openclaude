@@ -11,6 +11,8 @@
  * the impression token and measures dwell itself; this client just relays it.
  */
 import { fetchWithProxyRetry } from './api/fetchWithProxyRetry.js'
+import { getFsImplementation } from '../utils/fsOperations.js'
+import { join } from 'path'
 
 const DEFAULT_ADS_BASE_URL = 'https://ads.gitlawb.com'
 
@@ -32,6 +34,12 @@ export type ConfirmResult = {
   status: string
   earnedMicro: number
   balanceMicro?: number
+}
+
+export type SessionContext = {
+  turnCount?: number
+  sessionDurationSec?: number
+  seenImpressionIds?: string[]
 }
 
 const COMMON_HEADERS = (earnCode: string): Record<string, string> => ({
@@ -81,6 +89,81 @@ export function sanitizeForAds(text: string): string {
     .slice(0, MAX_CONTEXT_CHARS)
 }
 
+export function detectProjectTechnologies(): string[] {
+  const techs: string[] = []
+  try {
+    const fs = getFsImplementation()
+    const cwd = fs.cwd()
+
+    if (fs.existsSync(join(cwd, 'package.json'))) {
+      techs.push('nodejs')
+      try {
+        const pkgContent = fs.readFileSync(join(cwd, 'package.json'), { encoding: 'utf8' })
+        const pkg = JSON.parse(pkgContent)
+        const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) }
+
+        if (deps.typescript) techs.push('typescript')
+        if (deps.react) techs.push('react')
+        if (deps.vue) techs.push('vue')
+        if (deps['@angular/core']) techs.push('angular')
+        if (deps.next) techs.push('nextjs')
+        if (deps.nuxt) techs.push('nuxtjs')
+        if (deps.svelte || deps['@sveltejs/kit']) techs.push('svelte')
+        if (deps.vite) techs.push('vite')
+        if (deps.tailwindcss) techs.push('tailwindcss')
+        if (deps.express) techs.push('express')
+        if (deps.nest) techs.push('nestjs')
+      } catch {
+        // Silently swallow JSON parse or read errors
+      }
+    }
+    if (fs.existsSync(join(cwd, 'tsconfig.json'))) {
+      if (!techs.includes('typescript')) techs.push('typescript')
+    }
+    if (fs.existsSync(join(cwd, 'go.mod'))) {
+      techs.push('go')
+    }
+    if (fs.existsSync(join(cwd, 'Cargo.toml'))) {
+      techs.push('rust')
+    }
+    if (
+      fs.existsSync(join(cwd, 'requirements.txt')) ||
+      fs.existsSync(join(cwd, 'pyproject.toml')) ||
+      fs.existsSync(join(cwd, 'Pipfile')) ||
+      fs.existsSync(join(cwd, 'poetry.lock'))
+    ) {
+      techs.push('python')
+    }
+    if (fs.existsSync(join(cwd, 'Gemfile'))) {
+      techs.push('ruby')
+    }
+    if (fs.existsSync(join(cwd, 'pom.xml')) || fs.existsSync(join(cwd, 'build.gradle'))) {
+      techs.push('java')
+    }
+    if (fs.existsSync(join(cwd, 'composer.json'))) {
+      techs.push('php')
+    }
+    if (fs.existsSync(join(cwd, 'bun.lockb')) || fs.existsSync(join(cwd, 'bun.lock'))) {
+      techs.push('bun')
+    }
+    if (fs.existsSync(join(cwd, 'deno.json')) || fs.existsSync(join(cwd, 'deno.jsonc'))) {
+      techs.push('deno')
+    }
+    if (fs.existsSync(join(cwd, 'Makefile'))) {
+      techs.push('makefile')
+    }
+    if (fs.existsSync(join(cwd, 'CMakeLists.txt'))) {
+      techs.push('cmake')
+    }
+    if (fs.existsSync(join(cwd, 'Dockerfile')) || fs.existsSync(join(cwd, 'docker-compose.yml'))) {
+      techs.push('docker')
+    }
+  } catch {
+    // Silently handle environment/permission errors
+  }
+  return Array.from(new Set(techs))
+}
+
 /**
  * Fetch the next sponsored tip for this viewer. When the viewer has enabled
  * sponsored tips (which discloses prompt sharing), the sanitized latest prompt
@@ -92,17 +175,34 @@ export async function fetchNextTip(
   earnCode: string,
   surface = 'openclaude',
   userMessage?: string,
+  sessionContext?: SessionContext,
 ): Promise<SponsoredTip | null> {
   const { signal, cancel } = withAbortTimeout(ADS_REQUEST_TIMEOUT_MS)
   try {
     const url = `${adsBaseUrl()}/api/ads/next?surface=${encodeURIComponent(surface)}`
     const sanitized = userMessage ? sanitizeForAds(userMessage) : ''
-    const init: RequestInit = sanitized
+    const technologies = detectProjectTechnologies()
+    const hasSessionFields = Boolean(
+      sessionContext &&
+        (sessionContext.turnCount !== undefined ||
+          sessionContext.sessionDurationSec !== undefined ||
+          (sessionContext.seenImpressionIds && sessionContext.seenImpressionIds.length > 0)),
+    )
+    const isPost = Boolean(sanitized || technologies.length > 0 || hasSessionFields)
+    const init: RequestInit = isPost
       ? {
           method: 'POST',
           headers: COMMON_HEADERS(earnCode),
           body: JSON.stringify({
-            context: { messages: [{ role: 'user', content: sanitized }] },
+            context: {
+              ...(sanitized ? { messages: [{ role: 'user', content: sanitized }] } : {}),
+              ...(technologies.length > 0 ? { technologies } : {}),
+            },
+            ...(sessionContext?.turnCount !== undefined ? { turn_count: sessionContext.turnCount } : {}),
+            ...(sessionContext?.sessionDurationSec !== undefined ? { session_duration_sec: sessionContext.sessionDurationSec } : {}),
+            ...(sessionContext?.seenImpressionIds && sessionContext.seenImpressionIds.length > 0
+              ? { seen_impression_ids: sessionContext.seenImpressionIds }
+              : {}),
           }),
           signal,
         }
@@ -170,6 +270,41 @@ export async function confirmTip(
       status: String(data.status ?? (resp.ok ? 'unknown' : 'error')),
       earnedMicro: toFiniteInt(data.earned_micro) ?? 0,
       balanceMicro: toFiniteInt(data.balance_micro),
+    }
+  } finally {
+    cancel()
+  }
+}
+
+export async function validateEarnCode(
+  earnCode: string,
+): Promise<{ valid: boolean; error?: string }> {
+  const { signal, cancel } = withAbortTimeout(ADS_REQUEST_TIMEOUT_MS)
+  try {
+    const url = `${adsBaseUrl()}/api/ads/next?surface=openclaude`
+    const resp = await fetchWithProxyRetry(
+      url,
+      {
+        method: 'GET',
+        headers: COMMON_HEADERS(earnCode),
+        signal,
+      },
+      { maxAttempts: 1 },
+    )
+    if (resp.status === 401) {
+      return {
+        valid: false,
+        error: 'Invalid earn code. Please check it on gitlawb.com/opengateway.',
+      }
+    }
+    if (!resp.ok) {
+      return { valid: false, error: `Connection failed (HTTP ${resp.status}).` }
+    }
+    return { valid: true }
+  } catch (err) {
+    return {
+      valid: false,
+      error: 'Network error or timeout. Please check your internet connection.',
     }
   } finally {
     cancel()
