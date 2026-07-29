@@ -1127,3 +1127,13 @@ export function notifyFeedbackRuleCreated(): void {
     },
   }));
 }
+
+export function notifyAdCreditEarned(earnedMicro?: number): string {
+  const companion = getCompanion();
+  if (!companion || getGlobalConfig().companionMuted) return "";
+
+  grantXp(0.1);
+
+  const usdStr = earnedMicro ? (earnedMicro / 1_000_000).toFixed(6) : "0.001";
+  return `${companion.name}: 💰 Crédito OpenGateway recebido! (+$${usdStr})`;
+}
