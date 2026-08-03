@@ -1,22 +1,19 @@
 import memoize from 'lodash-es/memoize.js'
 import { homedir } from 'os'
 import { join } from 'path'
+import { getFsImplementation } from './fsOperations.js'
 
 /**
  * Resolves the override env value for the config home directory.
- * Resolves the OpenClaude config home override.
- *
- * Intentionally does not read `CLAUDE_CONFIG_DIR`: OpenClaude config must stay
- * independent from Claude Code config and credentials.
+ * Priority: OPENCLAUDE_CONFIG_DIR > CLAUDE_CONFIG_DIR
  */
 export function resolveConfigDirEnv(options?: {
   openClaudeConfigDir?: string
   legacyConfigDir?: string
   warn?: (message: string) => void
 }): string | undefined {
-  void options?.legacyConfigDir
   void options?.warn
-  return options?.openClaudeConfigDir || undefined
+  return options?.openClaudeConfigDir || options?.legacyConfigDir || undefined
 }
 
 /**
@@ -37,6 +34,16 @@ export function resolveClaudeConfigHomeDir(options?: {
 
   const homeDir = options?.homeDir ?? homedir()
   const openClaudeDir = join(homeDir, '.openclaude')
+  const claudeDir = join(homeDir, '.claude')
+
+  try {
+    const fs = getFsImplementation()
+    if (!fs.existsSync(openClaudeDir) && fs.existsSync(claudeDir)) {
+      return claudeDir.normalize('NFC')
+    }
+  } catch {
+    // Ignore fs errors and fall back to default openClaudeDir
+  }
 
   return openClaudeDir.normalize('NFC')
 }
@@ -74,6 +81,7 @@ export const getClaudeConfigHomeDir = Object.assign(
 
     const configDirEnv = resolveConfigDirEnv({
       openClaudeConfigDir: process.env.OPENCLAUDE_CONFIG_DIR,
+      legacyConfigDir: process.env.CLAUDE_CONFIG_DIR,
     })
     if (configDirEnv) {
       return resolveClaudeConfigHomeDir({ configDirEnv })

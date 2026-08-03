@@ -1,5 +1,6 @@
 import { feature } from 'bun:bundle'
 import mergeWith from 'lodash-es/mergeWith.js'
+import { homedir } from 'os'
 import { dirname, join, resolve } from 'path'
 import { z } from 'zod/v4'
 import {
@@ -275,11 +276,24 @@ export function getSettingsFilePathForSource(
   source: SettingSource,
 ): string | undefined {
   switch (source) {
-    case 'userSettings':
-      return join(
+    case 'userSettings': {
+      const userPath = join(
         getSettingsRootPathForSource(source),
         getUserSettingsFilePath(),
       )
+      const legacyUserPath = join(
+        homedir(),
+        '.claude',
+        getUserSettingsFilePath(),
+      )
+      if (
+        !getFsImplementation().existsSync(userPath) &&
+        getFsImplementation().existsSync(legacyUserPath)
+      ) {
+        return legacyUserPath
+      }
+      return userPath
+    }
     case 'projectSettings':
     case 'localSettings': {
       const openClaudePath = join(
@@ -353,6 +367,62 @@ function getSettingsForSourceUncached(
     }
 
     return null
+  }
+
+  if (
+    source === 'userSettings' ||
+    source === 'projectSettings' ||
+    source === 'localSettings'
+  ) {
+    const primaryPath =
+      source === 'userSettings'
+        ? join(getSettingsRootPathForSource(source), getUserSettingsFilePath())
+        : join(
+            getSettingsRootPathForSource(source),
+            getRelativeSettingsFilePathForSource(source),
+          )
+
+    const secondaryPath =
+      source === 'userSettings'
+        ? join(homedir(), '.claude', getUserSettingsFilePath())
+        : join(
+            getSettingsRootPathForSource(source),
+            source === 'projectSettings'
+              ? '.claude/settings.json'
+              : '.claude/settings.local.json',
+          )
+
+    const fs = getFsImplementation()
+    const hasPrimary = fs.existsSync(primaryPath)
+    const hasSecondary =
+      primaryPath !== secondaryPath && fs.existsSync(secondaryPath)
+
+    let fileSettings: SettingsJson | null = null
+
+    if (hasPrimary && hasSecondary) {
+      const { settings: secSettings } = parseSettingsFile(secondaryPath)
+      const { settings: primSettings } = parseSettingsFile(primaryPath)
+      if (secSettings && primSettings) {
+        fileSettings = mergeWith(
+          {},
+          secSettings,
+          primSettings,
+          settingsMergeCustomizer,
+        ) as SettingsJson
+      } else {
+        fileSettings = primSettings || secSettings || null
+      }
+    } else {
+      const targetPath = hasPrimary
+        ? primaryPath
+        : hasSecondary
+          ? secondaryPath
+          : primaryPath
+      const { settings } = parseSettingsFile(targetPath)
+      fileSettings = settings
+    }
+
+    return fileSettings
   }
 
   const settingsFilePath = getSettingsFilePathForSource(source)

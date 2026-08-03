@@ -363,6 +363,7 @@ test.serial('dynamic discovery checks .openclaude skill directories', async () =
 
     assert.deepEqual(getProjectSkillsPaths(featureDir), [
       join(featureDir, '.openclaude', 'skills'),
+      join(featureDir, '.claude', 'skills'),
     ])
   } finally {
     try {

@@ -23,8 +23,21 @@ export function resolveGlobalClaudeFile(options: {
   const oauthSuffix = options.oauthSuffix ?? ''
   const configDir = options.configDirEnv || options.homeDir || homedir()
   const newFilename = `.openclaude${oauthSuffix}.json`
+  const legacyFilename = `.claude${oauthSuffix}.json`
 
-  return join(configDir, newFilename)
+  const newPath = join(configDir, newFilename)
+  const legacyPath = join(configDir, legacyFilename)
+
+  try {
+    const fs = getFsImplementation()
+    if (!fs.existsSync(newPath) && fs.existsSync(legacyPath)) {
+      return legacyPath
+    }
+  } catch {
+    // Ignore fs errors
+  }
+
+  return newPath
 }
 
 // Config and data paths
@@ -41,6 +54,7 @@ export const getGlobalClaudeFile = memoize((): string => {
   const oauthSuffix = fileSuffixForOauthConfig()
   const configDirEnv = resolveConfigDirEnv({
     openClaudeConfigDir: process.env.OPENCLAUDE_CONFIG_DIR,
+    legacyConfigDir: process.env.CLAUDE_CONFIG_DIR,
   })
   const configDir = configDirEnv || homedir()
 
