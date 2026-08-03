@@ -30,3 +30,7 @@ temp_reference/
 
 # Added by ggshield
 .cache_ggshield
+
+# Graphify
+graphify-out/
+**/graphify-out/

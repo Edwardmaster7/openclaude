@@ -1,4 +1,3 @@
-
 # Design Spec: Ads System High-Yield Optimization (/ads)
 
 **Date:** 2026-07-29
