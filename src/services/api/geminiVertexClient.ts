@@ -425,6 +425,8 @@ function toGeminiContents(
         }
         if (b.type === 'text' && typeof b.text === 'string' && b.text) {
           otherParts.push({ text: b.text })
+        } else if (b.type === 'image' || b.type === 'image_url') {
+          otherParts.push({ text: '[Inline image omitted]' })
         } else if (b.type === 'tool_use' && b.name && b.id) {
           toolUseIdToName.set(b.id, b.name)
           const { thoughtSignature } = decodeToolUseId(b.id)

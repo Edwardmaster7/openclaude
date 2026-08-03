@@ -1122,7 +1122,7 @@ function joinTextContentParts(parts: OpenAIContentPart[]): string {
 function convertToolResultContent(
   content: unknown,
   isError?: boolean,
-  options?: { supportsImageInputs?: boolean },
+  options?: { supportsImageInputs?: boolean; formatForGemini?: boolean },
 ): string | OpenAIContentPart[] {
   if (typeof content === 'string') {
     return isError ? `Error: ${content}` : content
@@ -1150,13 +1150,20 @@ function convertToolResultContent(
       continue
     }
 
-    if (block?.type === 'image') {
+    if (block?.type === 'image' || block?.type === 'image_url') {
+      if (options?.formatForGemini) {
+        parts.push({
+          type: 'text',
+          text: '[Inline image omitted for Gemini API compatibility]',
+        })
+        continue
+      }
       if (options?.supportsImageInputs === false) {
         throw new Error(
           'The active provider accepts text-only messages and does not support image inputs.',
         )
       }
-      const source = block.source
+      const source = block?.source
       if (source?.type === 'url' && source.url) {
         parts.push({ type: 'image_url', image_url: { url: source.url } })
       } else if (source?.type === 'base64' && source.media_type && source.data) {
@@ -1166,6 +1173,8 @@ function convertToolResultContent(
             url: `data:${source.media_type};base64,${source.data}`,
           },
         })
+      } else if (block?.image_url?.url) {
+        parts.push({ type: 'image_url', image_url: { url: block.image_url.url } })
       }
       continue
     }
@@ -1205,7 +1214,7 @@ function convertToolResultContent(
 
 function convertContentBlocks(
   content: unknown,
-  options?: { supportsImageInputs?: boolean },
+  options?: { supportsImageInputs?: boolean; formatForGemini?: boolean },
 ): string | OpenAIContentPart[] {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return String(content ?? '')
@@ -1216,7 +1225,15 @@ function convertContentBlocks(
       case 'text':
         parts.push({ type: 'text', text: block.text ?? '' })
         break
-      case 'image': {
+      case 'image':
+      case 'image_url': {
+        if (options?.formatForGemini) {
+          parts.push({
+            type: 'text',
+            text: '[Inline image omitted for Gemini API compatibility]',
+          })
+          break
+        }
         if (options?.supportsImageInputs === false) {
           throw new Error(
             'The active provider accepts text-only messages and does not support image inputs.',
@@ -1232,6 +1249,8 @@ function convertContentBlocks(
           })
         } else if (src?.type === 'url') {
           parts.push({ type: 'image_url', image_url: { url: src.url } })
+        } else if (block.image_url?.url) {
+          parts.push({ type: 'image_url', image_url: { url: block.image_url.url } })
         }
         break
       }
@@ -1336,12 +1355,14 @@ function convertMessages(
     reasoningContentFallback?: '' | 'omit'
     preserveGeminiThoughtSignature?: boolean
     supportsImageInputs?: boolean
+    formatForGemini?: boolean
   },
 ): OpenAIMessage[] {
   const preserveReasoningContent = options?.preserveReasoningContent === true
   const reasoningContentFallback = options?.reasoningContentFallback
   const preserveGeminiThoughtSignature = options?.preserveGeminiThoughtSignature === true
   const supportsImageInputs = options?.supportsImageInputs
+  const formatForGemini = options?.formatForGemini === true
   const result: OpenAIMessage[] = []
   const knownToolCallIds = new Set<string>()
 
@@ -1399,7 +1420,7 @@ function convertMessages(
               result.push({
                 role: 'tool',
                 tool_call_id: id,
-                content: convertToolResultContent(tr.content, tr.is_error, { supportsImageInputs }),
+                content: convertToolResultContent(tr.content, tr.is_error, { supportsImageInputs, formatForGemini }),
               })
             } else {
               logForDebugging(
@@ -1416,13 +1437,13 @@ function convertMessages(
         if (otherContent && otherContent.length > 0) {
           result.push({
             role: 'user',
-            content: convertContentBlocks(otherContent, { supportsImageInputs }),
+            content: convertContentBlocks(otherContent, { supportsImageInputs, formatForGemini }),
           })
         }
       } else {
         result.push({
           role: 'user',
-          content: convertContentBlocks(content, { supportsImageInputs }),
+          content: convertContentBlocks(content, { supportsImageInputs, formatForGemini }),
         })
       }
     } else if (role === 'assistant') {
@@ -1472,7 +1493,7 @@ function convertMessages(
         const assistantMsg: OpenAIMessage = {
           role: 'assistant',
           content: (() => {
-            const c = convertContentBlocks(textContent ?? [], { supportsImageInputs })
+            const c = convertContentBlocks(textContent ?? [], { supportsImageInputs, formatForGemini })
             return typeof c === 'string'
               ? c
               : Array.isArray(c)
@@ -1573,7 +1594,7 @@ function convertMessages(
         const assistantMsg: OpenAIMessage = {
           role: 'assistant',
           content: (() => {
-            const c = convertContentBlocks(content, { supportsImageInputs })
+            const c = convertContentBlocks(content, { supportsImageInputs, formatForGemini })
             return typeof c === 'string'
               ? c
               : Array.isArray(c)
@@ -4375,6 +4396,7 @@ class OpenAIShimMessages {
           request.baseUrl,
         ),
         supportsImageInputs: shimConfig.supportsImageInputs,
+        formatForGemini: isGeminiRequest,
       }),
     )
 
@@ -4746,6 +4768,22 @@ class OpenAIShimMessages {
           for (const block of msg.content as Array<{ type?: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown; is_error?: boolean }>) {
             if (block.type === 'text' && block.text) {
               parts.push({ text: block.text })
+            } else if (block.type === 'image') {
+              const src = (block as { source?: { type?: string; media_type?: string; data?: string; url?: string } }).source
+              if (src?.type === 'base64' && src.media_type && src.data) {
+                parts.push({
+                  inlineData: {
+                    mimeType: src.media_type,
+                    data: src.data,
+                  },
+                })
+              } else if (src?.url) {
+                parts.push({ text: `[Image: ${src.url}]` })
+              } else {
+                parts.push({ text: '[Inline image omitted]' })
+              }
+            } else if (block.type === 'image_url') {
+              parts.push({ text: '[Inline image omitted]' })
             } else if (block.type === 'tool_use' && block.id && block.name) {
               parts.push({
                 functionCall: {

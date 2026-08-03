@@ -1,6 +1,7 @@
 import { realpath } from 'fs/promises'
 import ignore from 'ignore'
 import memoize from 'lodash-es/memoize.js'
+import { homedir } from 'os'
 import {
   basename,
   dirname,
@@ -775,7 +776,14 @@ async function loadSkillsFromCommandsDir(
  */
 export const getSkillDirCommands = memoize(
   async (cwd: string): Promise<Command[]> => {
-    const userSkillsDir = join(getClaudeConfigHomeDir(), 'skills')
+    const userSkillsDirs = [join(getClaudeConfigHomeDir(), 'skills')]
+    const legacyUserSkillsDir = join(homedir(), '.claude', 'skills')
+    if (
+      getClaudeConfigHomeDir() !== join(homedir(), '.claude') &&
+      getFsImplementation().existsSync(legacyUserSkillsDir)
+    ) {
+      userSkillsDirs.push(legacyUserSkillsDir)
+    }
     const managedSkillsDir = join(getManagedFilePath(), '.openclaude', 'skills')
     const projectSkillsDirs = getProjectDirsUpToHome(
       'skills',
@@ -783,7 +791,7 @@ export const getSkillDirCommands = memoize(
     ).sort(compareSkillDirPrecedence)
 
     logForDebugging(
-      `Loading skills from: managed=${managedSkillsDir}, user=${userSkillsDir}, project=[${projectSkillsDirs.join(', ')}]`,
+      `Loading skills from: managed=${managedSkillsDir}, user=[${userSkillsDirs.join(', ')}], project=[${projectSkillsDirs.join(', ')}]`,
     )
 
     // Load from additional directories (--add-dir)
@@ -817,7 +825,7 @@ export const getSkillDirCommands = memoize(
     // (all independent — different directories, no shared state)
     const [
       managedSkills,
-      userSkills,
+      userSkillsNested,
       projectSkillsNested,
       additionalSkillsNested,
       legacyCommands,
@@ -826,7 +834,11 @@ export const getSkillDirCommands = memoize(
         ? Promise.resolve([])
         : loadSkillsFromSkillsDir(managedSkillsDir, 'policySettings'),
       isSettingSourceEnabled('userSettings') && !skillsLocked
-        ? loadSkillsFromSkillsDir(userSkillsDir, 'userSettings')
+        ? Promise.all(
+            userSkillsDirs.map(dir =>
+              loadSkillsFromSkillsDir(dir, 'userSettings'),
+            ),
+          )
         : Promise.resolve([]),
       projectSettingsEnabled
         ? Promise.all(
@@ -855,7 +867,7 @@ export const getSkillDirCommands = memoize(
       ...managedSkills,
       ...projectSkillsNested.flat(),
       ...additionalSkillsNested.flat(),
-      ...userSkills,
+      ...userSkillsNested.flat(),
       ...legacyCommands,
     ]
 
@@ -874,6 +886,7 @@ export const getSkillDirCommands = memoize(
       string,
       SettingSource | 'builtin' | 'mcp' | 'plugin' | 'bundled'
     >()
+    const seenSkillNames = new Set<string>()
     const deduplicatedSkills: Command[] = []
 
     for (let i = 0; i < allSkillsWithPaths.length; i++) {
@@ -882,20 +895,26 @@ export const getSkillDirCommands = memoize(
       const { skill } = entry
 
       const fileId = fileIds[i]
-      if (fileId === null || fileId === undefined) {
-        deduplicatedSkills.push(skill)
-        continue
+      if (fileId !== null && fileId !== undefined) {
+        const existingSource = seenFileIds.get(fileId)
+        if (existingSource !== undefined) {
+          logForDebugging(
+            `Skipping duplicate skill '${skill.name}' from ${skill.source} (same file already loaded from ${existingSource})`,
+          )
+          continue
+        }
+        seenFileIds.set(fileId, skill.source)
       }
 
-      const existingSource = seenFileIds.get(fileId)
-      if (existingSource !== undefined) {
+      const scopeNameKey = `${skill.source}:${skill.name}`
+      if (seenSkillNames.has(scopeNameKey)) {
         logForDebugging(
-          `Skipping duplicate skill '${skill.name}' from ${skill.source} (same file already loaded from ${existingSource})`,
+          `Skipping duplicate skill '${skill.name}' from ${skill.source} (skill with name already loaded in same scope)`,
         )
         continue
       }
+      seenSkillNames.add(scopeNameKey)
 
-      seenFileIds.set(fileId, skill.source)
       deduplicatedSkills.push(skill)
     }
 
@@ -933,7 +952,7 @@ export const getSkillDirCommands = memoize(
     }
 
     logForDebugging(
-      `Loaded ${deduplicatedSkills.length} unique skills (${unconditionalSkills.length} unconditional, ${newConditionalSkills.length} conditional, managed: ${managedSkills.length}, user: ${userSkills.length}, project: ${projectSkillsNested.flat().length}, additional: ${additionalSkillsNested.flat().length}, legacy commands: ${legacyCommands.length})`,
+      `Loaded ${deduplicatedSkills.length} unique skills (${unconditionalSkills.length} unconditional, ${newConditionalSkills.length} conditional, managed: ${managedSkills.length}, user: ${userSkillsNested.flat().length}, project: ${projectSkillsNested.flat().length}, additional: ${additionalSkillsNested.flat().length}, legacy commands: ${legacyCommands.length})`,
     )
 
     return unconditionalSkills

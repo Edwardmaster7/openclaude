@@ -2280,6 +2280,71 @@ test('uses GEMINI_ACCESS_TOKEN for Gemini OpenAI-compatible requests', async () 
   expect<string | null>(capturedProject).toBe('gemini-project')
 })
 
+test('converts image blocks to text placeholders for Gemini requests to avoid image_url 400 errors', async () => {
+  let capturedBody: { messages?: Array<{ role: string; content: unknown }> } | null = null
+
+  process.env.CLAUDE_CODE_USE_GEMINI = '1'
+  process.env.GEMINI_API_KEY = 'gemini-test-key'
+  process.env.GEMINI_BASE_URL =
+    'https://generativelanguage.googleapis.com/v1beta/openai'
+  process.env.GEMINI_MODEL = 'gemini-3.6-flash'
+  delete process.env.OPENAI_BASE_URL
+  delete process.env.OPENAI_API_KEY
+
+  globalThis.fetch = (async (_input, init) => {
+    capturedBody = JSON.parse(init?.body as string)
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-gemini-img',
+        model: 'gemini-3.6-flash',
+        choices: [
+          {
+            message: { role: 'assistant', content: 'ok' },
+            finish_reason: 'stop',
+          },
+        ],
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+  }) as unknown as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+
+  await client.beta.messages.create({
+    model: 'gemini-3.6-flash',
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Ran tool' },
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_playwright',
+            content: [
+              { type: 'text', text: 'Screenshot captured' },
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: 'image/png',
+                  data: 'ZmFrZQ==',
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    max_tokens: 32,
+    stream: false,
+  })
+
+  expect(capturedBody).not.toBeNull()
+  const bodyString = JSON.stringify(capturedBody)
+  expect(bodyString).not.toContain('"type":"image_url"')
+  expect(bodyString).not.toContain('image_url')
+})
+
 test('uses NVIDIA_API_KEY for NVIDIA NIM requests without OPENAI_API_KEY', async () => {
   let capturedAuthorization: string | null = null
 
