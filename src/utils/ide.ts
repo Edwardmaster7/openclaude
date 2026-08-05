@@ -476,10 +476,15 @@ const getWindowsUserProfile = memoize(async (): Promise<string | undefined> => {
  * stat loop compounded startup latency.
  */
 export async function getIdeLockfilesPaths(): Promise<string[]> {
-  const paths: string[] = [join(getClaudeConfigHomeDir(), 'ide')]
+  const homeDir = os.homedir()
+  const paths: string[] = [
+    join(getClaudeConfigHomeDir(), 'ide'),
+    join(homeDir, '.claude', 'ide'),
+    join(homeDir, '.openclaude', 'ide'),
+  ]
 
   if (getPlatform() !== 'wsl') {
-    return paths
+    return Array.from(new Set(paths))
   }
 
   // For Windows, use heuristics to find the potential paths.
@@ -491,6 +496,7 @@ export async function getIdeLockfilesPaths(): Promise<string[]> {
     const converter = new WindowsToWSLConverter(process.env.WSL_DISTRO_NAME)
     const wslPath = converter.toLocalPath(windowsHome)
     paths.push(resolve(wslPath, '.openclaude', 'ide'))
+    paths.push(resolve(wslPath, '.claude', 'ide'))
   }
 
   // Construct the path based on the standard Windows WSL locations
@@ -516,6 +522,7 @@ export async function getIdeLockfilesPaths(): Promise<string[]> {
         continue // Skip system directories
       }
       paths.push(join(usersDir, user.name, '.openclaude', 'ide'))
+      paths.push(join(usersDir, user.name, '.claude', 'ide'))
     }
   } catch (error: unknown) {
     if (isFsInaccessible(error)) {
@@ -527,7 +534,7 @@ export async function getIdeLockfilesPaths(): Promise<string[]> {
       logError(error)
     }
   }
-  return paths
+  return Array.from(new Set(paths))
 }
 
 /**

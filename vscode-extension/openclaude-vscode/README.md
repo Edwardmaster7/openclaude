@@ -83,4 +83,3 @@ To package (optional):
 ```bash
 npm run package
 ```
-
