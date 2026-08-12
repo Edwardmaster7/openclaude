@@ -38,18 +38,25 @@ GLOBAL_MEM_PATH="$CONFIG_HOME/projects/$SANITIZED_PATH/memory/"
 LOCAL_MEM_PATH="$PROJECT_ROOT/.claude/memory/"
 
 if [ "$1" == "pull" ]; then
-  echo "Pulling memory from global OpenClaude to local..."
+  echo "Pulling team memory from global OpenClaude to local repository..."
   mkdir -p "$LOCAL_MEM_PATH"
   rsync -av --delete --include="*/" --include="*.md" --exclude="*" "$GLOBAL_MEM_PATH" "$LOCAL_MEM_PATH"
   
-  # Add to git automatically (useful when called via pre-commit)
+  # Privacy Guard: Filter out private user profile memories from git tracking
+  for file in "$LOCAL_MEM_PATH"*.md; do
+    if [ -f "$file" ] && grep -q "type: user" "$file"; then
+      rm -f "$file"
+    fi
+  done
+
+  # Add team memories to git automatically
   git add "$LOCAL_MEM_PATH"
-  echo "Memory pulled successfully."
+  echo "Team memory pulled successfully (private user memories kept local)."
 elif [ "$1" == "push" ]; then
-  echo "Pushing memory from local to global OpenClaude..."
+  echo "Pushing team memory from local repository to global OpenClaude..."
   mkdir -p "$GLOBAL_MEM_PATH"
   rsync -av --delete --include="*/" --include="*.md" --exclude="*" "$LOCAL_MEM_PATH" "$GLOBAL_MEM_PATH"
-  echo "Memory pushed successfully."
+  echo "Team memory pushed successfully."
 else
   echo "Usage: ./.claude/sync-claude-memory.sh [pull|push]"
   exit 1

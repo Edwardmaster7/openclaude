@@ -19,6 +19,11 @@ import {
 } from './state.js'
 import type { GoalState } from './types.js'
 
+// Pause goal evaluation after this many consecutive evaluator failures
+// (malformed JSON or API error). Mirrors the AutoCompact circuit breaker
+// pattern: avoids burning API quota on a stuck evaluator.
+export const MAX_EVALUATOR_FAILURES = 3
+
 const GOAL_EVALUATION_MESSAGE_LIMIT = 24
 const GOAL_PERSISTENCE_ERROR_MESSAGE_LIMIT = 500
 
@@ -153,6 +158,20 @@ export async function* evaluateGoalAfterTurn({
   if (goal.lastEvaluatedMessageUuid === terminalUuid) return []
   if (toolUseContext.abortController.signal.aborted) return []
   if (hasPendingInteractiveDialog(toolUseContext)) return []
+
+  // Circuit breaker: pause goal if the evaluator has failed too many times
+  // consecutively. This prevents wasting API quota when the evaluator is
+  // persistently broken (e.g., model returning non-JSON output).
+  if (goal.evaluatorFailures >= MAX_EVALUATOR_FAILURES) {
+    const paused = pauseGoal(goal, nowIso())
+    toolUseContext.setAppState(prev => ({ ...prev, goal: paused }))
+    await persistGoal(saveGoalState, paused, logGoalPersistenceFailure)
+    yield createSystemMessage(
+      `Goal paused: evaluator failed ${goal.evaluatorFailures} times consecutively. Resume the goal to retry.`,
+      'warning',
+    )
+    return []
+  }
 
   if (goal.turnCount >= goal.maxTurns) {
     const paused = pauseGoalAtMaxTurns(goal, terminalUuid, nowIso())

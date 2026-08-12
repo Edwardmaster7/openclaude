@@ -30,8 +30,8 @@ if (typeof globalThis.File === 'undefined') {
 // Defensive compatibility guard for runtime/test environments where MACRO is not defined.
 if (typeof (globalThis as any).MACRO === 'undefined') {
   ;(globalThis as any).MACRO = {
-    VERSION: '0.25.0',
-    DISPLAY_VERSION: '0.25.0',
+    VERSION: '0.26.0',
+    DISPLAY_VERSION: '0.26.0',
     BUILD_TIME: new Date().toISOString(),
     ISSUES_EXPLAINER: 'https://github.com/Gitlawb/openclaude/issues',
     FEEDBACK_CHANNEL: 'https://github.com/Gitlawb/openclaude/issues',

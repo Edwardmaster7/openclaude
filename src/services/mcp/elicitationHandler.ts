@@ -11,6 +11,7 @@ import {
   executeElicitationResultHooks,
   executeNotificationHooks,
 } from '../../utils/hooks.js'
+import { getIsNonInteractiveSession } from '../../bootstrap/state.js'
 import { logMCPDebug, logMCPError } from '../../utils/log.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import {
@@ -104,6 +105,20 @@ export function registerElicitationHandler(
               hookResponse.action as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
           })
           return hookResponse
+        }
+
+        // Auto-cancel in non-interactive / headless / SDK sessions where UI dialog cannot be displayed
+        if (getIsNonInteractiveSession()) {
+          logMCPDebug(
+            serverName,
+            'Non-interactive session: auto-cancelling elicitation request',
+          )
+          logEvent('tengu_mcp_elicitation_response', {
+            mode: mode as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+            action:
+              'cancel' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+          })
+          return { action: 'cancel' }
         }
 
         const elicitationId =

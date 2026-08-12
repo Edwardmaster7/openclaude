@@ -5,7 +5,7 @@ export default defineVendor({
   label: 'Google Gemini',
   classification: 'native',
   defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-  defaultModel: 'gemini-3-flash-preview',
+  defaultModel: 'gemini-3.6-flash',
   requiredEnvVars: ['GEMINI_API_KEY'],
   setup: {
     requiresAuth: true,

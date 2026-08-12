@@ -16,9 +16,18 @@ export const MEMORY_TYPES = [
   'feedback',
   'project',
   'reference',
+  'procedure',
+  'architecture_decision',
 ] as const
 
 export type MemoryType = (typeof MEMORY_TYPES)[number]
+
+export type MemoryRelationType = 'depends_on' | 'supersedes' | 'see_also'
+
+export type MemoryRelation = {
+  type: MemoryRelationType
+  target: string
+}
 
 /**
  * Parse a raw frontmatter value into a MemoryType.
@@ -101,6 +110,20 @@ export const TYPES_SECTION_COMBINED: readonly string[] = [
   '    assistant: [saves team reference memory: grafana.internal/d/api-latency is the oncall latency dashboard — check it when editing request-path code]',
   '    </examples>',
   '</type>',
+  '<type>',
+  '    <name>procedure</name>',
+  '    <scope>default to team</scope>',
+  '    <description>Step-by-step validated operational routines, recipes, build sequences, or troubleshooting procedures specific to this project.</description>',
+  '    <when_to_save>When a multi-step routine or fix recipe is validated ("here is how we build the container", "to reset local dev DB do X then Y")</when_to_save>',
+  '    <how_to_use>Follow when executing complex operational or setup workflows.</how_to_use>',
+  '</type>',
+  '<type>',
+  '    <name>architecture_decision</name>',
+  '    <scope>team</scope>',
+  '    <description>Records technical trade-offs, design rationale, and architecture decisions (ADRs) chosen for the project.</description>',
+  '    <when_to_save>When a major architectural choice, framework decision, or structural design trade-off is finalized</when_to_save>',
+  '    <how_to_use>Consult when proposing design changes or refactoring existing architecture.</how_to_use>',
+  '</type>',
   '</types>',
   '',
 ]
@@ -172,6 +195,18 @@ export const TYPES_SECTION_INDIVIDUAL: readonly string[] = [
   "    user: the Grafana board at grafana.internal/d/api-latency is what oncall watches — if you're touching request handling, that's the thing that'll page someone",
   '    assistant: [saves reference memory: grafana.internal/d/api-latency is the oncall latency dashboard — check it when editing request-path code]',
   '    </examples>',
+  '</type>',
+  '<type>',
+  '    <name>procedure</name>',
+  '    <description>Step-by-step validated operational routines, recipes, build sequences, or troubleshooting procedures specific to this project.</description>',
+  '    <when_to_save>When a multi-step routine or fix recipe is validated ("here is how we build the container", "to reset local dev DB do X then Y")</when_to_save>',
+  '    <how_to_use>Follow when executing complex operational or setup workflows.</how_to_use>',
+  '</type>',
+  '<type>',
+  '    <name>architecture_decision</name>',
+  '    <description>Records technical trade-offs, design rationale, and architecture decisions (ADRs) chosen for the project.</description>',
+  '    <when_to_save>When a major architectural choice, framework decision, or structural design trade-off is finalized</when_to_save>',
+  '    <how_to_use>Consult when proposing design changes or refactoring existing architecture.</how_to_use>',
   '</type>',
   '</types>',
   '',

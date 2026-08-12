@@ -27,9 +27,9 @@ export const OPENAI_MODEL_DEFAULTS = {
 // Override with GEMINI_MODEL env var.
 // ---------------------------------------------------------------------------
 export const GEMINI_MODEL_DEFAULTS = {
-  opus: 'gemini-2.5-pro',   // most capable
-  sonnet: 'gemini-2.0-flash',              // balanced
-  haiku: 'gemini-2.0-flash-lite',          // fast & cheap
+  opus: 'gemini-3.1-pro-preview',   // most capable
+  sonnet: 'gemini-3.6-flash',              // balanced
+  haiku: 'gemini-3.1-flash-lite-preview',          // fast & cheap
 } as const
 
 // @[MODEL LAUNCH]: Add a new CLAUDE_*_CONFIG constant here. Double check the correct model strings

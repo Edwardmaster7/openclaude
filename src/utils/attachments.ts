@@ -2463,6 +2463,7 @@ async function getRelevantMemoryAttachments(
         signal,
         recentTools,
         alreadySurfaced,
+        Array.from(readFileState.keys()),
       ).catch(() => []),
     ),
   )

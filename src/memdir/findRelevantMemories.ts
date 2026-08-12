@@ -42,13 +42,23 @@ export async function findRelevantMemories(
   signal: AbortSignal,
   recentTools: readonly string[] = [],
   alreadySurfaced: ReadonlySet<string> = new Set(),
+  activeFiles: readonly string[] = [],
 ): Promise<RelevantMemory[]> {
   const memories = (await scanMemoryFiles(memoryDir, signal)).filter(
-    m => !alreadySurfaced.has(m.filePath) && (m.score === undefined || m.score >= 20) && !m.ignored,
+    m => !alreadySurfaced.has(m.filePath) && (m.score === undefined || m.score >= 20) && !m.ignored && !m.isExpired,
   )
   if (memories.length === 0) {
     return []
   }
+
+  // Proactive File Triggering: Boost memories matching currently active files
+  const proactiveMemories = memories.filter(m => {
+    if (!m.appliesTo || m.appliesTo.length === 0) return false
+    return m.appliesTo.some(path => activeFiles.some(af => af.includes(path) || path.includes(af)))
+  })
+
+  // Fast Local BM25 Keyword Scoring
+  const highConfidenceLocalMemories = memories.filter(m => computeLocalBM25Score(query, m) >= 30)
 
   const selectedFilenames = await selectRelevantMemories(
     query,
@@ -57,15 +67,22 @@ export async function findRelevantMemories(
     recentTools,
   )
   const byFilename = new Map(memories.map(m => [m.filename, m]))
-  const selected = selectedFilenames
+  let selected = selectedFilenames
     .map(filename => byFilename.get(filename))
     .filter((m): m is MemoryHeader => m !== undefined)
 
-  // Boost critical memories (score >= 80) by always loading them if not already selected
-  const criticalMemories = memories.filter(
-    m => m.score !== undefined && m.score >= 80 && !selectedFilenames.includes(m.filename),
+  // Boost critical memories (score >= 80), proactive memories and high-confidence local matches
+  const bonusMemories = memories.filter(
+    m =>
+      !selectedFilenames.includes(m.filename) &&
+      ((m.score !== undefined && m.score >= 80) ||
+        proactiveMemories.includes(m) ||
+        highConfidenceLocalMemories.includes(m)),
   )
-  selected.push(...criticalMemories)
+  selected.push(...bonusMemories)
+
+  // Memory Graph Traversal: expand 1-Hop depends_on/see_also and prune supersedes
+  selected = expandMemoryGraph(selected, memories)
 
   // Fires even on empty selection: selection-rate needs the denominator,
   // and -1 ages distinguish "ran, picked nothing" from "never ran".
@@ -78,6 +95,61 @@ export async function findRelevantMemories(
   }
 
   return selected.map(m => ({ path: m.filePath, mtimeMs: m.mtimeMs }))
+}
+
+function computeLocalBM25Score(query: string, memory: MemoryHeader): number {
+  const terms = query.toLowerCase().split(/\W+/).filter(t => t.length > 2)
+  if (terms.length === 0) return 0
+  let score = 0
+  const text = `${memory.filename} ${memory.description ?? ''} ${(memory.tags ?? []).join(' ')}`.toLowerCase()
+  for (const term of terms) {
+    if (text.includes(term)) {
+      score += 15
+    }
+  }
+  return score
+}
+
+function expandMemoryGraph(
+  selected: MemoryHeader[],
+  allMemories: MemoryHeader[],
+): MemoryHeader[] {
+  const byFilename = new Map(allMemories.map(m => [m.filename, m]))
+  const finalMap = new Map<string, MemoryHeader>()
+  const supersededTargets = new Set<string>()
+
+  // Collect selected memories and identify superseded targets
+  for (const item of selected) {
+    finalMap.set(item.filename, item)
+    if (item.relations) {
+      for (const rel of item.relations) {
+        if (rel.type === 'supersedes') {
+          supersededTargets.add(rel.target)
+        }
+      }
+    }
+  }
+
+  // 1-Hop graph traversal for depends_on and see_also
+  for (const item of Array.from(finalMap.values())) {
+    if (item.relations) {
+      for (const rel of item.relations) {
+        if (rel.type === 'depends_on' || rel.type === 'see_also') {
+          const targetMem = byFilename.get(rel.target)
+          if (targetMem && !targetMem.isExpired && !targetMem.ignored) {
+            finalMap.set(targetMem.filename, targetMem)
+          }
+        }
+      }
+    }
+  }
+
+  // Prune superseded targets
+  for (const target of supersededTargets) {
+    finalMap.delete(target)
+  }
+
+  return Array.from(finalMap.values())
 }
 
 async function selectRelevantMemories(

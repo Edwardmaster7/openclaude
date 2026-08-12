@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.26.0](https://github.com/Gitlawb/openclaude/compare/v0.25.0...v0.26.0) (2026-08-12)
+
+### Features & Performance Improvements
+
+* **harness:** comprehensive harness engineering enhancements — Haiku evaluator 15s timeout, circuit breaker (3 max failures), confidence thresholding (0.7 min).
+* **performance:** single-allocation `canUseTool` wrapper, 30s online DNS cache, 5,000 token default ToolSearch threshold for faster TTFT.
+* **memory:** subagent DoomLoop key cleanup, `lastCacheSafeParams` auto-reset, multilingual & code-aware `STOP_WORDS` context pruning.
+* **mcp:** auto-cancellation of MCP elicitations in non-interactive/SDK sessions.
+* **cli:** English i18n for all memory tools & new `/memory ttl` lifecycle dashboard.
+
 ## [0.25.0](https://github.com/Gitlawb/openclaude/compare/v0.24.0...v0.25.0) (2026-07-20)
 
 

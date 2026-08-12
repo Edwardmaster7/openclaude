@@ -1,5 +1,6 @@
 import type { SystemPrompt } from '../../utils/systemPromptType.js'
 import { asSystemPrompt } from '../../utils/systemPromptType.js'
+import { createCombinedAbortSignal } from '../../utils/combinedAbortSignal.js'
 import { queryHaiku } from '../api/claude.js'
 import type { GoalEvaluatorDecision, GoalState } from './types.js'
 
@@ -41,6 +42,22 @@ const MAX_PROMPT_CHARS = 16_000
 const MAX_MESSAGE_CHARS = 1_200
 const RECENT_MESSAGE_LIMIT = 20
 
+// Timeout for a single evaluator Haiku call. If the API stalls, the goal
+// evaluation fails gracefully rather than blocking the entire turn.
+const EVALUATOR_TIMEOUT_MS = 15_000
+
+// Minimum confidence required to accept a "complete" decision from the
+// evaluator. Low-confidence completions are treated as incomplete to avoid
+// false-positive goal achievements. Configurable via env var for testing.
+export function resolveGoalMinConfidence(): number {
+  const raw = process.env.OPENCLAUDE_GOAL_MIN_CONFIDENCE
+  if (raw !== undefined && raw !== '') {
+    const parsed = parseFloat(raw)
+    if (Number.isFinite(parsed) && parsed > 0 && parsed <= 1) return parsed
+  }
+  return 0.7
+}
+
 export type GoalModelRequest = {
   systemPrompt: SystemPrompt
   userPrompt: string
@@ -54,26 +71,33 @@ export type GoalModelCaller = (
 ) => Promise<string>
 
 const defaultModelCaller: GoalModelCaller = async request => {
-  const response = await queryHaiku({
-    systemPrompt: request.systemPrompt,
-    userPrompt: request.userPrompt,
-    outputFormat: GOAL_EVALUATOR_OUTPUT_FORMAT,
-    signal: request.signal,
-    options: {
-      querySource: 'goal_evaluation',
-      enablePromptCaching: false,
-      agents: [],
-      isNonInteractiveSession: request.isNonInteractiveSession,
-      hasAppendSystemPrompt: false,
-      mcpTools: [],
-    },
-  })
-
-  return response.message.content
-    .filter((block: { type: string }) => block.type === 'text')
-    .map((block: { type: string; text?: string }) => block.text ?? '')
-    .join('')
-    .trim()
+  const { signal: timedSignal, cleanup } = createCombinedAbortSignal(
+    request.signal,
+    { timeoutMs: EVALUATOR_TIMEOUT_MS },
+  )
+  try {
+    const response = await queryHaiku({
+      systemPrompt: request.systemPrompt,
+      userPrompt: request.userPrompt,
+      outputFormat: GOAL_EVALUATOR_OUTPUT_FORMAT,
+      signal: timedSignal,
+      options: {
+        querySource: 'goal_evaluation',
+        enablePromptCaching: false,
+        agents: [],
+        isNonInteractiveSession: request.isNonInteractiveSession,
+        hasAppendSystemPrompt: false,
+        mcpTools: [],
+      },
+    })
+    return response.message.content
+      .filter((block: { type: string }) => block.type === 'text')
+      .map((block: { type: string; text?: string }) => block.text ?? '')
+      .join('')
+      .trim()
+  } finally {
+    cleanup()
+  }
 }
 
 function truncateText(text: string, maxChars: number): string {
@@ -232,6 +256,26 @@ function parseDecision(raw: string): GoalEvaluatorDecision | null {
   }
 }
 
+/**
+ * Apply confidence threshold: if the evaluator reports "complete" but with
+ * low confidence, demote the decision to "incomplete" so the goal continues.
+ * This prevents false-positive completions when the model is uncertain.
+ */
+function applyConfidenceThreshold(
+  decision: GoalEvaluatorDecision,
+): GoalEvaluatorDecision {
+  const minConfidence = resolveGoalMinConfidence()
+  if (decision.complete && decision.confidence < minConfidence) {
+    return {
+      ...decision,
+      complete: false,
+      decision: 'incomplete',
+      reason: `Low evaluator confidence (${decision.confidence.toFixed(2)} < ${minConfidence}): ${decision.reason}`,
+    }
+  }
+  return decision
+}
+
 export async function evaluateGoal({
   goal,
   messages,
@@ -257,7 +301,7 @@ export async function evaluateGoal({
     for (let attempt = 0; attempt < 2; attempt++) {
       const raw = await modelCaller(request)
       const parsed = parseDecision(raw)
-      if (parsed) return parsed
+      if (parsed) return applyConfidenceThreshold(parsed)
     }
     return {
       complete: false,

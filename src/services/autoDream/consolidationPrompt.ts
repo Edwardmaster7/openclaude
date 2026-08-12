@@ -43,10 +43,28 @@ Don't exhaustively read transcripts. Look only for things you already suspect ma
 
 ## Phase 3 — Consolidate
 
-For each thing worth remembering, write or update a memory file at the top level of the memory directory. Use the memory file format and type conventions from your system prompt's auto-memory section — it's the source of truth for what to save, how to structure it, and what NOT to save.
+For each thing worth remembering, write or update a memory file at the top level of the memory directory. Use the memory file format and type conventions (types: user, feedback, project, reference, procedure, architecture_decision):
+
+Frontmatter schema:
+\`\`\`yaml
+---
+name: topic-name
+description: concise description
+type: user | feedback | project | reference | procedure | architecture_decision
+tags: [tag1, tag2]
+applies_to: [path/to/code.ts]
+relations:
+  - type: depends_on | supersedes | see_also
+    target: other-memory.md
+ttl: 30d # optional expiration: 7d, 30d, 24h
+---
+\`\`\`
 
 Focus on:
 - Merging new signal into existing topic files rather than creating near-duplicates
+- Establishing relations in YAML (\`depends_on\`, \`see_also\`, \`supersedes\`) to build the Memory Graph
+- Setting \`supersedes\` pointing to old memories when a new policy/decision overrides previous guidance
+- Linking code paths in \`applies_to\` when guidance is specific to files/modules
 - Converting relative dates ("yesterday", "last week") to absolute dates so they remain interpretable after time passes
 - Deleting contradicted facts — if today's investigation disproves an old memory, fix it at the source
 
@@ -55,6 +73,7 @@ Focus on:
 Update \`${ENTRYPOINT_NAME}\` so it stays under ${MAX_ENTRYPOINT_LINES} lines AND under ~25KB. It's an **index**, not a dump — each entry should be one line under ~150 characters: \`- [Title](file.md) — one-line hook\`. Never write memory content directly into it.
 
 - Remove pointers to memories that are now stale, wrong, or superseded
+- Self-Healing: Purge/delete memory files whose \`ttl\` has expired and clean up broken \`depends_on\` targets from remaining memories
 - Demote verbose entries: if an index line is over ~200 chars, it's carrying content that belongs in the topic file — shorten the line, move the detail
 - Add pointers to newly important memories
 - Resolve contradictions — if two files disagree, fix the wrong one
