@@ -25,13 +25,20 @@ function objectBody(source: string, marker: RegExp): string {
 }
 
 describe('interactive REPL max-turn cap', () => {
-  test('supplies the local interactive default at runtime', () => {
-    expect(DEFAULT_REPL_MAX_TURNS).toBe(50)
-    expect(resolveReplMaxTurns()).toBe(50)
+  test('disables the cap by default (0 → no limit)', () => {
+    expect(DEFAULT_REPL_MAX_TURNS).toBe(0)
+    expect(resolveReplMaxTurns()).toBe(Infinity)
   })
 
-  test('preserves an explicit interactive cap at runtime', () => {
+  test('treats 0, null, undefined and negatives as "no limit"', () => {
+    expect(resolveReplMaxTurns(0)).toBe(Infinity)
+    expect(resolveReplMaxTurns(null)).toBe(Infinity)
+    expect(resolveReplMaxTurns(-1)).toBe(Infinity)
+  })
+
+  test('preserves an explicit positive cap at runtime', () => {
     expect(resolveReplMaxTurns(7)).toBe(7)
+    expect(resolveReplMaxTurns(1000)).toBe(1000)
   })
 
   test('passes the resolved cap to foreground and background queries', () => {

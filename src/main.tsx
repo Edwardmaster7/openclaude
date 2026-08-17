@@ -166,8 +166,10 @@ import { peekForStdinData, writeToStderr } from 'src/utils/process.js';
 import { createHeadlessHeartbeat, parseHeadlessHeartbeatDuration, validateHeadlessHeartbeatPrintMode } from 'src/cli/headlessHeartbeat.js';
 import { setCwd } from 'src/utils/Shell.js';
 import { type ProcessedResume, processResumedConversation } from 'src/utils/sessionRestore.js';
+import { handleCrashRecoveryCheck } from 'src/utils/sessionRecoveryCheck.js';
+import { initSessionLock, getProjectDir } from 'src/utils/sessionStorage.js';
 import { plural } from 'src/utils/stringUtils.js';
-import { type ChannelEntry, getInitialMainLoopModel, getIsNonInteractiveSession, getSdkBetas, getSessionId, getUserMsgOptIn, setAllowedChannels, setChromeFlagOverride, setClientType, setCwdState, setDirectConnectServerUrl, setInitialMainLoopModel, setInlinePlugins, setIsInteractive, setKairosActive, setOriginalCwd, setQuestionPreviewFormat, setSdkBetas, setSessionBypassPermissionsMode, setSessionDangerousPermissionMode, setSessionPersistenceDisabled, setSessionSource, setUserMsgOptIn, switchSession } from './bootstrap/state.js';
+import { type ChannelEntry, getInitialMainLoopModel, getIsNonInteractiveSession, getSdkBetas, getSessionId, getSessionProjectDir, getUserMsgOptIn, setAllowedChannels, setChromeFlagOverride, setClientType, setCwdState, setDirectConnectServerUrl, setInitialMainLoopModel, setInlinePlugins, setIsInteractive, setKairosActive, setOriginalCwd, setQuestionPreviewFormat, setSdkBetas, setSessionBypassPermissionsMode, setSessionDangerousPermissionMode, setSessionPersistenceDisabled, setSessionSource, setUserMsgOptIn, switchSession } from './bootstrap/state.js';
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 const autoModeStateModule = feature('TRANSCRIPT_CLASSIFIER') ? require('./utils/permissions/autoModeState.js') as typeof import('./utils/permissions/autoModeState.js') : null;
@@ -913,6 +915,17 @@ async function run(): Promise<CommanderCommand> {
       setInlinePlugins(pluginDir);
       clearPluginCache('preAction: --plugin-dir inline plugins');
     }
+    const rawAddDirs: string[] = [];
+    for (let i = 0; i < process.argv.length; i++) {
+      if (process.argv[i] === '--add-dir' && process.argv[i + 1]) {
+        rawAddDirs.push(process.argv[i + 1]);
+      } else if (process.argv[i].startsWith('--add-dir=')) {
+        rawAddDirs.push(process.argv[i].slice('--add-dir='.length));
+      }
+    }
+    if (rawAddDirs.length > 0) {
+      setAdditionalDirectoriesForClaudeMd(rawAddDirs);
+    }
     runMigrations();
     profileCheckpoint('preAction_after_migrations');
 
@@ -973,7 +986,7 @@ async function run(): Promise<CommanderCommand> {
       throw new InvalidArgumentError(`It must be one of: ${allowed.join(', ')}`);
     }
     return value;
-  })).option('--agent <agent>', `Agent for the current session. Overrides the 'agent' setting.`).option('--betas <betas...>', 'Beta headers to include in API requests (API key users only)').option('--fallback-model <model>', 'Enable automatic fallback to specified model when default model is overloaded').addOption(new Option('--workload <tag>', 'Workload tag for billing-header attribution (cc_workload). Process-scoped; set by SDK daemon callers that spawn subprocesses for cron work. (only works with --print)').hideHelp()).option('--settings <file-or-json>', 'Path to a settings JSON file or a JSON string to load additional settings from').option('--add-dir <directories...>', 'Additional directories to allow tool access to').option('--ide', 'Automatically connect to IDE on startup if exactly one valid IDE is available', () => true).option('--strict-mcp-config', 'Only use MCP servers from --mcp-config, ignoring all other MCP configurations', () => true).option('--session-id <uuid>', 'Use a specific session ID for the conversation (must be a valid UUID)').option('-n, --name <name>', 'Set a display name for this session (shown in /resume and terminal title)').option('--agents <json>', 'JSON object defining custom agents (e.g. \'{"reviewer": {"description": "Reviews code", "prompt": "You are a code reviewer"}}\')').option('--setting-sources <sources>', 'Comma-separated list of setting sources to load (user, project, local).')
+  })).option('--agent <agent>', `Agent for the current session. Overrides the 'agent' setting.`).option('--betas <betas...>', 'Beta headers to include in API requests (API key users only)').option('--fallback-model <model>', 'Enable automatic fallback to specified model when default model is overloaded').addOption(new Option('--workload <tag>', 'Workload tag for billing-header attribution (cc_workload). Process-scoped; set by SDK daemon callers that spawn subprocesses for cron work. (only works with --print)').hideHelp()).option('--settings <file-or-json>', 'Path to a settings JSON file or a JSON string to load additional settings from').option('--add-dir <directory>', 'Additional directory to allow tool access to (repeatable: --add-dir A --add-dir B)', (val: string, prev: string[]) => [...prev, val], [] as string[]).option('--ide', 'Automatically connect to IDE on startup if exactly one valid IDE is available', () => true).option('--strict-mcp-config', 'Only use MCP servers from --mcp-config, ignoring all other MCP configurations', () => true).option('--session-id <uuid>', 'Use a specific session ID for the conversation (must be a valid UUID)').option('-n, --name <name>', 'Set a display name for this session (shown in /resume and terminal title)').option('--agents <json>', 'JSON object defining custom agents (e.g. \'{"reviewer": {"description": "Reviews code", "prompt": "You are a code reviewer"}}\')').option('--setting-sources <sources>', 'Comma-separated list of setting sources to load (user, project, local).')
   // gh-33508: <paths...> (variadic) consumed everything until the next
   // --flag. `claude --plugin-dir /path mcp add --transport http` swallowed
   // `mcp` and `add` as paths, then choked on --transport as an unknown
@@ -1522,7 +1535,7 @@ async function run(): Promise<CommanderCommand> {
           setupResult: setupClaudeInChrome(),
           dynamicMcpConfig,
           appendSystemPrompt,
-          hasWebBrowserTool: feature('WEB_BROWSER_TOOL') && typeof Bun !== 'undefined' && 'WebView' in Bun
+          hasWebBrowserTool: feature('WEB_BROWSER_TOOL') ? (typeof Bun !== 'undefined' && 'WebView' in Bun) : false
         });
         dynamicMcpConfig = startupConfig.dynamicMcpConfig;
         allowedTools.push(...startupConfig.allowedTools);
@@ -1544,7 +1557,7 @@ async function run(): Promise<CommanderCommand> {
           setupResult: setupClaudeInChrome(),
           dynamicMcpConfig,
           appendSystemPrompt,
-          hasWebBrowserTool: feature('WEB_BROWSER_TOOL') && typeof Bun !== 'undefined' && 'WebView' in Bun
+          hasWebBrowserTool: feature('WEB_BROWSER_TOOL') ? (typeof Bun !== 'undefined' && 'WebView' in Bun) : false
         });
         dynamicMcpConfig = startupConfig.dynamicMcpConfig;
         appendSystemPrompt = startupConfig.appendSystemPrompt;
@@ -3314,7 +3327,16 @@ async function run(): Promise<CommanderCommand> {
         thinkingConfig
       }, renderAndRun);
       return;
-    } else if (options.resume || options.fromPr || teleport || remote !== null) {
+    }
+
+    if (!options.resume && !options.continue && !options.fromPr && !teleport && remote === null) {
+      const recoveredSessionId = await handleCrashRecoveryCheck(getProjectDir(getOriginalCwd()));
+      if (recoveredSessionId) {
+        options.resume = recoveredSessionId;
+      }
+    }
+
+    if (options.resume || options.fromPr || teleport || remote !== null) {
       // Handle resume flow - from file (internal-only), session ID, or interactive selector
 
       // Clear stale caches before resuming to ensure fresh file/skill discovery
@@ -3634,6 +3656,7 @@ async function run(): Promise<CommanderCommand> {
         });
       }
     } else {
+      await initSessionLock();
       const pendingHookMessages = hooksPromise && hookMessages.length === 0 ? hooksPromise : undefined;
       profileCheckpoint('action_after_hooks');
       maybeActivateProactive(options);
@@ -3740,8 +3763,13 @@ async function run(): Promise<CommanderCommand> {
   // always returns false before enableConfigs(). cc:// URLs are rewritten to
   // `open` at main() line ~851 BEFORE this runs, so argv check is safe here.
   const isPrintMode = process.argv.includes('-p') || process.argv.includes('--print');
+  const isResumeMode = process.argv.includes('--continue') || process.argv.includes('-c') || process.argv.includes('--resume');
+  const skipSubcommands = isPrintMode || isResumeMode;
+  if (skipSubcommands) {
+    console.error("DEBUG ARGV:", process.argv);
+  }
   const isCcUrl = process.argv.some(a => a.startsWith('cc://') || a.startsWith('cc+unix://'));
-  if (isPrintMode && !isCcUrl) {
+  if (skipSubcommands && !isCcUrl) {
     profileCheckpoint('run_before_parse');
     await program.parseAsync(process.argv);
     profileCheckpoint('run_after_parse');
@@ -4198,8 +4226,8 @@ async function run(): Promise<CommanderCommand> {
     await runSkillsCliAction(() => action(skillsHandlers));
     process.exit(process.exitCode ?? 0);
   };
-  const skillsCmd = program.command('skills').description('List, inspect, validate, and manage OpenClaude skills').configureHelp(createSortedHelpConfig());
-  skillsCmd.command('list').description('List configured skills').option('--json', 'Output as JSON').action(async (options: {
+  const skillsCmd = program.command('skills').description('List, inspect, validate, and manage OpenClaude skills').configureHelp(createSortedHelpConfig()).allowUnknownOption();
+  skillsCmd.command('list').description('List configured skills').option('--json', 'Output as JSON').allowUnknownOption().action(async (options: {
     json?: boolean;
   }) => runSkillsCommanderAction(({ skillsListHandler }) => skillsListHandler(options)));
   skillsCmd.command('show <name>').description('Show details for a configured skill').action(async (name: string) => {

@@ -38,7 +38,10 @@ export function getProviderFallbackChain(
   if (!Array.isArray(chain)) {
     return []
   }
-  return chain.filter((id): id is string => typeof id === 'string' && id.length > 0)
+  const filtered = chain.filter(
+    (id): id is string => typeof id === 'string' && id.length > 0,
+  )
+  return Array.from(new Set(filtered))
 }
 
 /**

@@ -716,6 +716,49 @@ describe('generateCommandSuggestions localization', () => {
       '/permissions',
     )
   })
+
+  test('sub-argument completion for /ads on and /ads off', () => {
+    const commands = [
+      promptCommand({
+        name: 'ads',
+        getDescription: () => 'Earn credits',
+      })
+    ]
+
+    const suggestions1 = generateCommandSuggestions('/ads ', commands)
+    expect(suggestions1.map(s => s.displayText)).toEqual(['/ads on', '/ads off'])
+
+    const suggestions2 = generateCommandSuggestions('/ads o', commands)
+    expect(suggestions2.map(s => s.displayText)).toEqual(['/ads on', '/ads off'])
+
+    const suggestions3 = generateCommandSuggestions('/ads of', commands)
+    expect(suggestions3.map(s => s.displayText)).toEqual(['/ads off'])
+  })
+
+  test('sub-argument completion for /config', () => {
+    const commands = [
+      promptCommand({
+        name: 'config',
+        getDescription: () => 'Configure settings',
+      })
+    ]
+
+    const suggestions = generateCommandSuggestions('/config th', commands)
+    expect(suggestions.map(s => s.displayText)).toEqual(['/config theme'])
+  })
+
+  test('sub-argument completion for /resume', () => {
+    const commands = [
+      promptCommand({
+        name: 'resume',
+        getDescription: () => 'Resume session',
+      })
+    ]
+
+    const suggestions = generateCommandSuggestions('/resume ', commands)
+    // Should run without throwing even if session directory is empty or missing
+    expect(Array.isArray(suggestions)).toBe(true)
+  })
 })
 
 describe('generateCommandSuggestions identifier filtering', () => {

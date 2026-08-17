@@ -35,7 +35,6 @@ export const call: LocalCommandCall = async (args, context) => {
   const history = getCacheStatsHistory()
   const session = getSessionCacheMetrics()
   const turn = getCurrentTurnCacheMetrics()
-
   if (history.length === 0) {
     return {
       type: 'text',

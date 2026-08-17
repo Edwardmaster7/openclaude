@@ -5,7 +5,7 @@ import { useTerminalSize } from '../hooks/useTerminalSize.js'
 import type { Command } from '../commands.js'
 import type { LocalJSXCommandCall } from '../types/command.js'
 import { getGlobalConfig, saveGlobalConfig } from '../utils/config.js'
-import { confirmTip, fetchNextTip } from '../services/ads.js'
+import { confirmTip, fetchNextTip, validateEarnCode } from '../services/ads.js'
 
 function statusText(): string {
   const ads = getGlobalConfig().ads
@@ -17,9 +17,13 @@ function statusText(): string {
     ].join('\n')
   }
   const masked = ads.earnCode ? `${ads.earnCode.slice(0, 6)}…` : '(none)'
+  const balanceText = ads.lastBalanceMicro !== undefined
+    ? `\nLast known balance: $${(ads.lastBalanceMicro / 1_000_000).toFixed(6)} USD`
+    : ''
   return [
-    `Sponsored tips: on  (earn code ${masked})`,
+    `Sponsored tips: on  (earn code ${masked})${balanceText}`,
     'You earn opengateway credits when a tip is shown during loading.',
+    'Dynamic tip rotation and project technology context targeting are active.',
     'Turn off any time with "/ads off".',
   ].join('\n')
 }
@@ -33,7 +37,9 @@ function enableWithCode(code: string): string {
   void warmOneEarn(code)
   return [
     "Sponsored tips enabled — you'll see them during loading and earn",
-    'opengateway credits each time. Run /ads to check your balance.',
+    'opengateway credits each time. Your recent prompt (with best-effort secret',
+    'redaction) is shared with our ad partner to match a relevant tip.',
+    'Run /ads to check or change sponsored tips.',
   ].join('\n')
 }
 
@@ -50,7 +56,6 @@ function warmOneEarn(code: string): Promise<void> {
     }
   })()
 }
-
 /**
  * Masked paste dialog for the earn code — same UX as entering a provider API
  * key (TextInput mask="*"), so the credential never appears in plaintext.
@@ -66,10 +71,12 @@ function AdsCodeDialog({
 }): React.ReactNode {
   const [value, setValue] = React.useState('')
   const [cursorOffset, setCursorOffset] = React.useState(0)
+  const [isValidating, setIsValidating] = React.useState(false)
+  const [errorMsg, setErrorMsg] = React.useState('')
   const { columns } = useTerminalSize()
 
   useInput((_input, key) => {
-    if (key.escape) onCancel()
+    if (key.escape && !isValidating) onCancel()
   })
 
   return (
@@ -84,32 +91,55 @@ function AdsCodeDialog({
       <Text dimColor>
         Paste your earn code (gitlawb.com/opengateway → Earn). It stays hidden as you type.
       </Text>
+      <Text dimColor>
+        Tips are contextual: your most recent prompt (with best-effort secret redaction)
+        is shared with our ad partner to match a relevant tip. Disable any time with /ads off.
+      </Text>
+      {errorMsg ? <Text color="error">{errorMsg}</Text> : null}
       <Box flexDirection="row" gap={1}>
-        <Text>›</Text>
-        <TextInput
-          value={value}
-          onChange={setValue}
-          cursorOffset={cursorOffset}
-          onChangeCursorOffset={setCursorOffset}
-          columns={Math.max(20, columns - 8)}
-          mask="*"
-          placeholder="earn_…"
-          onSubmit={v => {
-            const code = v.trim()
-            if (code) onSubmit(code)
-            else onCancel()
-          }}
-        />
+        <Text>{isValidating ? '⟳' : '›'}</Text>
+        {isValidating ? (
+          <Text dimColor>Validating earn code...</Text>
+        ) : (
+          <TextInput
+            value={value}
+            onChange={setValue}
+            cursorOffset={cursorOffset}
+            onChangeCursorOffset={setCursorOffset}
+            columns={Math.max(20, columns - 8)}
+            mask="*"
+            placeholder="earn_…"
+            onSubmit={async v => {
+              const code = v.trim()
+              if (!code) {
+                onCancel()
+                return
+              }
+              setIsValidating(true)
+              setErrorMsg('')
+              const res = await validateEarnCode(code)
+              setIsValidating(false)
+              if (res.valid) {
+                onSubmit(code)
+              } else {
+                setErrorMsg(res.error ?? 'Validation failed.')
+              }
+            }}
+          />
+        )}
       </Box>
-      <Text dimColor>enter to enable · esc to cancel</Text>
+      <Text dimColor>
+        {isValidating ? 'validating...' : 'enter to enable · esc to cancel'}
+      </Text>
     </Box>
   )
 }
 
 /**
- * `/ads on` opens a masked paste dialog (or accepts an inline code). `/ads off`
- * disables. `/ads` shows status. Inline-code args are also redacted from history
- * via `isSensitive` below.
+ * `/ads on` always opens a masked paste dialog and never accepts an inline code
+ * (a code typed inline is already exposed in the terminal scrollback). `/ads off`
+ * disables and clears the stored code. `/ads` shows status. Inline-code args are
+ * also redacted from history via `isSensitive` below.
  */
 export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
   const parts = (args ?? '').trim().split(/\s+/).filter(Boolean)
@@ -117,7 +147,12 @@ export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
 
   if (sub === 'off') {
     const wasOn = getGlobalConfig().ads?.enabled
-    saveGlobalConfig(c => ({ ...c, ads: { ...(c.ads ?? {}), enabled: false } }))
+    // Drop the stored earn code on opt-out — it's a credential, and keeping it at
+    // rest after the user disabled earning has no benefit.
+    saveGlobalConfig(c => {
+      const { earnCode: _earnCode, ...restAds } = c.ads ?? {}
+      return { ...c, ads: { ...restAds, enabled: false } }
+    })
     onDone(wasOn ? 'Sponsored tips disabled.' : 'Sponsored tips are already off.', {
       display: 'system',
     })

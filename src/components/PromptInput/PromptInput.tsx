@@ -61,6 +61,7 @@ import { getGlobalConfig, type PastedContent, saveGlobalConfig } from '../../uti
 import { logForDebugging } from '../../utils/debug.js';
 import { parseDirectMemberMessage, sendDirectMemberMessage } from '../../utils/directMemberMessage.js';
 import type { EffortLevel } from '../../utils/effort.js';
+import { toPersistableEffort } from '../../utils/effort.js';
 import { env } from '../../utils/env.js';
 import { errorMessage } from '../../utils/errors.js';
 import { isBilledAsExtraUsage } from '../../utils/extraUsage.js';
@@ -2060,7 +2061,8 @@ function PromptInput({
       return {
         ...prev,
         mainLoopModel: model,
-        mainLoopModelForSession: null,
+        ...(model !== null ? { mainLoopModelForSession: model } : {}),
+        effortValue: _effort !== undefined ? toPersistableEffort(_effort) : prev.effortValue,
         // Turn off fast mode if switching to a model that doesn't support it
         ...(wasFastModeDisabled && {
           fastMode: false

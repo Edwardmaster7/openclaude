@@ -5,12 +5,14 @@
  */
 
 import type { Dirent } from 'fs'
-import { readdir } from 'fs/promises'
+import { readFile, readdir, writeFile } from 'fs/promises'
 import { join } from 'path'
+import { logForDebugging } from '../utils/debug.js'
+import { errorMessage } from '../utils/errors.js'
 import { parseFrontmatter } from '../utils/frontmatterParser.js'
 import type { ReadFileRangeResult } from '../utils/readFileInRange.js'
 import { readFileInRange } from '../utils/readFileInRange.js'
-import { type MemoryType, parseMemoryType } from './memoryTypes.js'
+import { type MemoryRelation, type MemoryType, parseMemoryType } from './memoryTypes.js'
 
 export type MemoryHeader = {
   filename: string
@@ -21,6 +23,12 @@ export type MemoryHeader = {
   score?: number
   confirmations?: number
   ignored?: boolean
+  relations?: MemoryRelation[]
+  appliesTo?: string[]
+  tags?: string[]
+  ttl?: string
+  expiresAt?: number
+  isExpired?: boolean
 }
 
 const MAX_MEMORY_FILES = 200
@@ -210,6 +218,14 @@ async function readMemoryHeader(
 
   const ignored = frontmatter.ignored === true || frontmatter.ignored === 'true'
 
+  const relations = parseRelations(frontmatter.relations)
+  const appliesTo = parseStringArray(frontmatter.applies_to ?? frontmatter.appliesTo)
+  const tags = parseStringArray(frontmatter.tags)
+  const ttl = typeof frontmatter.ttl === 'string' ? frontmatter.ttl : undefined
+  const ttlMs = parseTtlMs(ttl)
+  const expiresAt = ttlMs !== undefined ? mtimeMs + ttlMs : undefined
+  const isExpired = expiresAt !== undefined && Date.now() > expiresAt
+
   return {
     filename: relativePath,
     filePath,
@@ -219,7 +235,54 @@ async function readMemoryHeader(
     score: !isNaN(score as number) ? score : undefined,
     confirmations: !isNaN(confirmations as number) ? confirmations : undefined,
     ignored: ignored ? true : undefined,
+    relations,
+    appliesTo,
+    tags,
+    ttl,
+    expiresAt,
+    isExpired: isExpired ? true : undefined,
   }
+}
+
+function parseTtlMs(ttlStr: unknown): number | undefined {
+  if (typeof ttlStr !== 'string') return undefined
+  const match = ttlStr.trim().match(/^(\d+)\s*([smdhw])$/i)
+  if (!match) return undefined
+  const val = parseInt(match[1]!, 10)
+  const unit = match[2]!.toLowerCase()
+  switch (unit) {
+    case 's': return val * 1000
+    case 'm': return val * 60 * 1000
+    case 'h': return val * 3600 * 1000
+    case 'd': return val * 24 * 3600 * 1000
+    case 'w': return val * 7 * 24 * 3600 * 1000
+    default: return undefined
+  }
+}
+
+function parseRelations(raw: unknown): MemoryRelation[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const relations: MemoryRelation[] = []
+  for (const item of raw) {
+    if (typeof item === 'object' && item !== null) {
+      const type = (item as { type?: unknown }).type
+      const target = (item as { target?: unknown }).target
+      if (
+        (type === 'depends_on' || type === 'supersedes' || type === 'see_also') &&
+        typeof target === 'string' &&
+        target.trim()
+      ) {
+        relations.push({ type, target: target.trim() })
+      }
+    }
+  }
+  return relations.length > 0 ? relations : undefined
+}
+
+function parseStringArray(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const arr = raw.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+  return arr.length > 0 ? arr : undefined
 }
 
 function insertNewestHeader(
@@ -267,4 +330,45 @@ export function formatMemoryManifest(memories: MemoryHeader[]): string {
         : `- ${tag}${m.filename} (${ts})`
     })
     .join('\n')
+}
+
+/**
+ * Dynamically update memory score and confirmation count for reinforcement learning.
+ */
+export async function updateMemoryScore(
+  filePath: string,
+  scoreDelta: number,
+  confirmationDelta: number = 0,
+): Promise<void> {
+  try {
+    let content = await readFile(filePath, 'utf8')
+    const { frontmatter } = parseFrontmatter(content, filePath)
+
+    const currentScore = typeof frontmatter.score === 'number'
+      ? frontmatter.score
+      : (typeof frontmatter.score === 'string' ? parseInt(frontmatter.score, 10) : 50)
+
+    const currentConfirmations = typeof frontmatter.confirmations === 'number'
+      ? frontmatter.confirmations
+      : (typeof frontmatter.confirmations === 'string' ? parseInt(frontmatter.confirmations, 10) : 0)
+
+    const newScore = Math.max(0, Math.min(100, (isNaN(currentScore) ? 50 : currentScore) + scoreDelta))
+    const newConfirmations = Math.max(0, (isNaN(currentConfirmations) ? 0 : currentConfirmations) + confirmationDelta)
+
+    if (/^score:\s*\d+/m.test(content)) {
+      content = content.replace(/^score:\s*\d+/m, `score: ${newScore}`)
+    } else {
+      content = content.replace(/^---\n/, `---\nscore: ${newScore}\n`)
+    }
+
+    if (/^confirmations:\s*\d+/m.test(content)) {
+      content = content.replace(/^confirmations:\s*\d+/m, `confirmations: ${newConfirmations}`)
+    } else {
+      content = content.replace(/^---\n/, `---\nconfirmations: ${newConfirmations}\n`)
+    }
+
+    await writeFile(filePath, content, 'utf8')
+  } catch (e) {
+    logForDebugging(`[memdir] updateMemoryScore failed for ${filePath}: ${errorMessage(e)}`)
+  }
 }

@@ -103,6 +103,7 @@ export type IdeType =
   | 'cursor'
   | 'windsurf'
   | 'agy'
+  | 'antigravity'
   | 'vscode'
   | 'pycharm'
   | 'intellij'
@@ -144,6 +145,13 @@ const supportedIdeConfigs: Record<IdeType, IdeConfig> = {
     processKeywordsLinux: ['windsurf'],
   },
   agy: {
+    ideKind: 'vscode',
+    displayName: 'Antigravity',
+    processKeywordsMac: ['Antigravity Helper', 'Antigravity.app'],
+    processKeywordsWindows: ['antigravity.exe', 'agy.exe'],
+    processKeywordsLinux: ['antigravity', 'agy'],
+  },
+  antigravity: {
     ideKind: 'vscode',
     displayName: 'Antigravity',
     processKeywordsMac: ['Antigravity Helper', 'Antigravity.app'],
@@ -1057,6 +1065,8 @@ async function getVSCodeIDECommand(ideType: IdeType): Promise<string | null> {
       return 'cursor' + ext
     case 'windsurf':
       return 'windsurf' + ext
+    case 'antigravity':
+      return 'antigravity-ide' + ext
     case 'agy':
       return 'agy' + ext
     default:

@@ -99,6 +99,8 @@ function getAutoToolSearchPercentage(): number {
  */
 const CHARS_PER_TOKEN = 2.5
 
+const MAX_DEFAULT_TOOL_TOKEN_THRESHOLD = 5_000
+
 /**
  * Get the token threshold for auto-enabling tool search for a given model.
  */
@@ -106,7 +108,15 @@ function getAutoToolSearchTokenThreshold(model: string): number {
   const betas = getMergedBetas(model)
   const contextWindow = getContextWindowForModel(model, betas)
   const percentage = getAutoToolSearchPercentage() / 100
-  return Math.floor(contextWindow * percentage)
+  const rawThreshold = Math.floor(contextWindow * percentage)
+  // When using default percentage (no explicit auto:N override), cap the
+  // token threshold at 5,000 to engage tool search earlier on large-context
+  // models (200k+), avoiding sending up to 20k tokens of tool schemas.
+  const envVal = process.env.ENABLE_TOOL_SEARCH
+  if (!envVal || envVal === 'auto') {
+    return Math.min(rawThreshold, MAX_DEFAULT_TOOL_TOKEN_THRESHOLD)
+  }
+  return rawThreshold
 }
 
 /**

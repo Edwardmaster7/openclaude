@@ -425,9 +425,14 @@ function getCodexSparkOption(): ModelOption {
 function getGeminiModelOptions(): ModelOption[] {
   return [
     {
+      value: 'gemini-3.7-flash',
+      label: 'Gemini 3.7 Flash',
+      description: 'Ultra-fast & highly capable · Latest Gemini 3.7 Flash model',
+    },
+    {
       value: 'gemini-3.6-flash',
       label: 'Gemini 3.6 Flash',
-      description: 'Ultra-fast & highly capable · Latest Gemini 3.6 Flash model',
+      description: 'Fast & capable · Gemini 3.6 Flash model',
     },
     {
       value: 'gemini-3.1-pro-preview',
@@ -827,30 +832,9 @@ function getModelOptionsBase(fastMode = false): ModelOption[] {
  * by `/model`, but in one step. See issue #1119.
  */
 export function getInactiveProviderProfileOptions(
-  activeProfileId: string | undefined,
+  _activeProfileId: string | undefined,
 ): ModelOption[] {
-  const profiles = getProviderProfiles()
-  const options: ModelOption[] = []
-  for (const profile of profiles) {
-    if (profile.id === activeProfileId) {
-      continue
-    }
-    const baseOptions = getProfileModelOptions(profile)
-    for (const baseOption of baseOptions) {
-      const modelValue =
-        typeof baseOption.value === 'string' ? baseOption.value : ''
-      if (!modelValue) {
-        continue
-      }
-      options.push({
-        value: encodeSwitchProfileValue(profile.id, modelValue),
-        label: `${modelValue} · ${profile.name}`,
-        description: `Switch to ${profile.name} (${profile.baseUrl})`,
-        switchToProfileId: profile.id,
-      })
-    }
-  }
-  return options
+  return []
 }
 
 // @[MODEL LAUNCH]: Add the new model ID to the appropriate family pattern below

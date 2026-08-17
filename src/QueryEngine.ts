@@ -53,6 +53,7 @@ import { getCwd } from './utils/cwd.js'
 import { isBareMode, isEnvTruthy } from './utils/envUtils.js'
 import { logForDebugging } from './utils/debug.js'
 import { getFastModeState } from './utils/fastMode.js'
+import { clearCacheSafeParams } from './utils/forkedAgent.js'
 import {
   type FileHistoryState,
   fileHistoryEnabled,
@@ -200,6 +201,10 @@ export class QueryEngine {
   // many turns in SDK mode.
   private discoveredSkillNames = new Set<string>()
   private loadedNestedMemoryPaths = new Set<string>()
+  // Wrapper around config.canUseTool that also tracks denials into
+  // this.permissionDenials. Created once in the constructor so that
+  // submitMessage() doesn't allocate a new closure on every turn.
+  private readonly wrappedCanUseTool: CanUseToolFn
 
   constructor(config: QueryEngineConfig) {
     this.config = config
@@ -208,6 +213,33 @@ export class QueryEngine {
     this.permissionDenials = []
     this.readFileState = config.readFileCache
     this.totalUsage = EMPTY_USAGE
+    // Build the canUseTool wrapper once — it captures config.canUseTool
+    // (injected and immutable) and this.permissionDenials (via `this`).
+    this.wrappedCanUseTool = async (
+      tool,
+      input,
+      toolUseContext,
+      assistantMessage,
+      toolUseID,
+      forceDecision,
+    ) => {
+      const result = await config.canUseTool(
+        tool,
+        input,
+        toolUseContext,
+        assistantMessage,
+        toolUseID,
+        forceDecision,
+      )
+      if (result.behavior !== 'allow') {
+        this.permissionDenials.push({
+          tool_name: sdkCompatToolName(tool.name),
+          tool_use_id: toolUseID,
+          tool_input: input,
+        })
+      }
+      return result
+    }
   }
 
   async *submitMessage(
@@ -241,38 +273,41 @@ export class QueryEngine {
 
     this.discoveredSkillNames.clear()
     setCwd(cwd)
-    const persistSession = !isSessionPersistenceDisabled()
     const startTime = Date.now()
-
-    // Wrap canUseTool to track permission denials
-    const wrappedCanUseTool: CanUseToolFn = async (
-      tool,
-      input,
-      toolUseContext,
-      assistantMessage,
-      toolUseID,
-      forceDecision,
-    ) => {
-      const result = await canUseTool(
-        tool,
-        input,
-        toolUseContext,
-        assistantMessage,
-        toolUseID,
-        forceDecision,
-      )
-
-      // Track denials for SDK reporting
-      if (result.behavior !== 'allow') {
-        this.permissionDenials.push({
-          tool_name: sdkCompatToolName(tool.name),
-          tool_use_id: toolUseID,
-          tool_input: input,
-        })
-      }
-
-      return result
+    try {
+      const { checkInternetConnection, isOfflineMode } = await import('src/services/api/offlineState.js')
+    await checkInternetConnection()
+    if (isOfflineMode()) {
+      yield {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: 'You are currently offline. Local commands and diagnostics are still available, but calls to the remote Claude API will fail. Please restore your internet connection to resume normal operations.',
+        },
+        session_id: getSessionId(),
+        uuid: randomUUID(),
+        timestamp: Date.now(),
+      } as any
+      yield {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        duration_ms: Date.now() - startTime,
+        duration_api_ms: 0,
+        num_turns: 0,
+        result: 'Offline mode active. Operations completed with offline fallback message.',
+        stop_reason: 'offline',
+        session_id: getSessionId(),
+        total_cost_usd: 0,
+        usage: EMPTY_USAGE,
+        modelUsage: {},
+        permission_denials: [],
+        fast_mode_state: { enabled: false },
+        uuid: randomUUID(),
+      } as any
+      return
     }
+    const persistSession = !isSessionPersistenceDisabled()
 
     const initialAppState = getAppState()
     const initialMainLoopModel = userSpecifiedModel
@@ -695,7 +730,7 @@ export class QueryEngine {
       systemPrompt,
       userContext,
       systemContext,
-      canUseTool: wrappedCanUseTool,
+      canUseTool: this.wrappedCanUseTool,
       toolUseContext: processUserInputContext,
       fallbackModel,
       querySource: 'sdk',
@@ -1209,6 +1244,9 @@ export class QueryEngine {
         initialAppState.fastMode,
       ),
       uuid: randomUUID(),
+    }
+    } finally {
+      clearCacheSafeParams()
     }
   }
 

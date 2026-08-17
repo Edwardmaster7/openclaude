@@ -100,6 +100,10 @@ const EMPTY_ACTIVE_OPERATIONS: QueryActiveOperationSnapshot = {
 }
 
 function positiveOrDefault(value: number | undefined, fallback: number): number {
+  // 0 is a valid "disabled" sentinel for timeouts — only fall back to the
+  // default when the caller passes undefined / NaN / negative numbers.
+  // Leases keep the legacy positive-only contract; see QueryGuardOptions.
+  if (value === 0) return 0
   return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? value
     : fallback
@@ -552,6 +556,9 @@ export class QueryGuard {
   }
 
   private _getHardMaxDeadlineAt(now: number): number {
+    // _hardMaxQueryMs === 0 → hard-max disabled → deadline pushed to infinity
+    // so _getTimeoutReason()'s `now >= deadline` check never trips.
+    if (this._hardMaxQueryMs <= 0) return Number.POSITIVE_INFINITY
     return (
       this._queryStartedAt +
       this._hardMaxQueryMs +
@@ -562,7 +569,12 @@ export class QueryGuard {
 
   private _getTimeoutReason(now: number): QueryGuardTimeoutReason | null {
     const isSuspended = this._suspendCount > 0
-    if (!isSuspended && now >= this._getHardMaxDeadlineAt(now)) {
+    // hard-max disabled when _hardMaxQueryMs === 0; skip that arm entirely.
+    if (
+      !isSuspended &&
+      this._hardMaxQueryMs > 0 &&
+      now >= this._getHardMaxDeadlineAt(now)
+    ) {
       return 'hard_max'
     }
 
@@ -577,6 +589,7 @@ export class QueryGuard {
     if (
       !isSuspended &&
       !hasValidLease &&
+      this._idleTimeoutMs > 0 &&
       now >= this._lastActivityAt + this._idleTimeoutMs
     ) {
       return 'idle'
@@ -603,14 +616,19 @@ export class QueryGuard {
     if (this._status !== 'running') return null
 
     const isSuspended = this._suspendCount > 0
-    const deadlines = isSuspended ? [] : [this._getHardMaxDeadlineAt(now)]
+    const deadlines: number[] = []
+    // hard-max arm: only when the cap is on AND not currently suspended.
+    if (!isSuspended && this._hardMaxQueryMs > 0) {
+      deadlines.push(this._getHardMaxDeadlineAt(now))
+    }
     const leaseDeadlines = [...this._activeLeases.values()]
       .map(lease => lease.deadlineAt)
       .filter(deadline => deadline > now)
 
     if (leaseDeadlines.length > 0) {
-      deadlines.push(Math.min(...leaseDeadlines))
-    } else if (!isSuspended) {
+      deadlines.push(...leaseDeadlines)
+    } else if (!isSuspended && this._idleTimeoutMs > 0) {
+      // idle arm: only when idle cap is on.
       deadlines.push(this._lastActivityAt + this._idleTimeoutMs)
     }
 

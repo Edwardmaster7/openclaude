@@ -99,7 +99,7 @@ describe('Gemini Context Caching', () => {
       )
     }))
 
-    const client = createOpenAIShimClient({
+    const client: any = createOpenAIShimClient({
       defaultHeaders: {},
     }) as any
 
@@ -107,6 +107,7 @@ describe('Gemini Context Caching', () => {
       model: 'gemini-2.0-flash',
       messages: [
         { role: 'user', content: 'Message 1 to cache' },
+        { role: 'assistant', content: 'Understood' },
         { role: 'user', content: 'Message 2 to query' },
       ],
       max_tokens: 100,
@@ -119,7 +120,8 @@ describe('Gemini Context Caching', () => {
     expect(cacheCall).toBeDefined()
     expect(cacheCall?.body.model).toBe('models/gemini-2.0-flash')
     expect(cacheCall?.body.contents).toEqual([
-      { role: 'user', parts: [{ text: 'Message 1 to cache' }] }
+      { role: 'user', parts: [{ text: 'Message 1 to cache' }] },
+      { role: 'model', parts: [{ text: 'Understood' }] }
     ])
 
     // Verify completion call had cached_content

@@ -27,6 +27,20 @@ if (typeof globalThis.File === 'undefined') {
   }
 }
 
+// Defensive compatibility guard for runtime/test environments where MACRO is not defined.
+if (typeof (globalThis as any).MACRO === 'undefined') {
+  ;(globalThis as any).MACRO = {
+    VERSION: '0.26.0',
+    DISPLAY_VERSION: '0.26.0',
+    BUILD_TIME: new Date().toISOString(),
+    ISSUES_EXPLAINER: 'https://github.com/Gitlawb/openclaude/issues',
+    FEEDBACK_CHANNEL: 'https://github.com/Gitlawb/openclaude/issues',
+    PACKAGE_URL: 'https://github.com/Gitlawb/openclaude',
+    NATIVE_PACKAGE_URL: undefined,
+    VERSION_CHANGELOG: undefined,
+  }
+}
+
 // OpenClaude: disable experimental API betas by default.
 // Tool search (defer_loading), global cache scope, and context management
 // require internal API support not available to external accounts → 500.
@@ -304,9 +318,13 @@ export async function main(
     hydrateGithubModelsTokenFromSecureStorage()
   }
 
-  const { validateProviderEnvForStartupOrExit } =
-    await importers.providerValidation()
-  await validateProviderEnvForStartupOrExit()
+  const isSkillsSubcommand = args.includes('skills') && !args.includes('--print') && !args.includes('-p') && !args.includes('--continue') && !args.includes('-c') && !args.includes('--resume');
+
+  if (!isSkillsSubcommand) {
+    const { validateProviderEnvForStartupOrExit } =
+      await importers.providerValidation()
+    await validateProviderEnvForStartupOrExit()
+  }
 
   // #808: --model alone (no --provider) — route to the env var matching the
   // active provider before the banner prints so the override is visible.
@@ -319,11 +337,12 @@ export async function main(
   const { eagerParseCliFlag } = await importers.cliArgs()
   const earlyModelFlag = eagerParseCliFlag('--model')
 
-  // Print the gradient startup screen before the Ink UI loads
+  // Print the gradient startup screen before the Ink UI loads. Plain CLI
+  // management subcommands should stay script-friendly and avoid the banner.
   // If we are about to enter Alternate Screen (fullscreen mode), printing to stdout
   // causes the logo to flash and immediately disappear. In that case, we skip it.
   const { isFullscreenEnvEnabled } = await import('../utils/fullscreen.js')
-  if (!isFullscreenEnvEnabled()) {
+  if (args[0] !== 'skills' && !isFullscreenEnvEnabled()) {
     const { printStartupScreen } = await importers.startupScreen()
     printStartupScreen(earlyModelFlag)
   }

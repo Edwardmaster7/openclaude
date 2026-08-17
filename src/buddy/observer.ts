@@ -4,7 +4,7 @@ import type { FeedbackDetectionResult } from "../hooks/feedbackHook.js";
 import { saveGlobalConfig, getGlobalConfig } from "../utils/config.js";
 import { getUserMessageText } from "../utils/messages.js";
 import { getCompanion } from "./companion.js";
-import { pickDeterministic } from "./hash.js";
+import { pickDeterministic } from "./deterministic.js";
 import { getLevelInfo } from "./progression.js";
 import { getErrorTip, getCodeReviewTip } from "./skills.js";
 import { checkKonamiCode, checkAnswer42 } from "./easter-eggs.js";
@@ -318,7 +318,6 @@ function checkQuests(
     }
   }
 }
-
 export async function fireCompanionObserver(
   messages: Message[],
   onReaction: (reaction: string | undefined) => void,
@@ -767,7 +766,7 @@ export async function fireCompanionObserver(
   let lastBashContent = "";
   let bashCommandStr = "";
 
-  for (const msg of messages) {
+  for (const msg of messages as Array<{ type?: string; message?: any }>) {
     let toolResultBlocks: any[] = [];
     if ((msg.type as string) === "tool_result") {
       toolResultBlocks = [msg];
@@ -1127,4 +1126,14 @@ export function notifyFeedbackRuleCreated(): void {
       totalSessionMinutes: curr.companionStats?.totalSessionMinutes ?? 0,
     },
   }));
+}
+
+export function notifyAdCreditEarned(earnedMicro?: number): string {
+  const companion = getCompanion();
+  if (!companion || getGlobalConfig().companionMuted) return "";
+
+  grantXp(0.1);
+
+  const usdStr = earnedMicro ? (earnedMicro / 1_000_000).toFixed(6) : "0.001";
+  return `${companion.name}: 💰 Crédito OpenGateway recebido! (+$${usdStr})`;
 }

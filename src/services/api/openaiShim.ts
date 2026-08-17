@@ -4184,7 +4184,7 @@ class OpenAIShimMessages {
     if (globalConfig.geminiContextCachingEnabled && isGeminiRequest && !options?.skipGeminiCache) {
       try {
         prefixMessages = compressedMessages.slice(0, -1)
-        
+
         const systemText = convertSystemPrompt(params.system) || ''
         const systemTokens = roughTokenCountEstimation(systemText)
         const toolsTokens = params.tools ? roughTokenCountEstimation(JSON.stringify(params.tools)) : 0
@@ -4194,9 +4194,9 @@ class OpenAIShimMessages {
               message: { content: m.content },
             })))
           : 0
-        
+
         const totalPrefixTokens = systemTokens + toolsTokens + prefixMessagesTokens
-        
+
         const modelLower = request.resolvedModel.toLowerCase()
         const isGemini3 = modelLower.includes('gemini-3')
         const autoThreshold = isGemini3 ? 4096 : 2048
@@ -4376,13 +4376,11 @@ class OpenAIShimMessages {
         messages: compressedMessages,
       }
     }
-
     const messagesToConvert = (params.messages ?? []) as Array<{
       role: string
       message?: { role?: string; content?: unknown }
       content?: unknown
     }>
-
     const useNativeOllamaChat =
       effectiveTransport === 'chat_completions' &&
       !shimConfig.endpointPath &&

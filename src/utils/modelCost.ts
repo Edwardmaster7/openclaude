@@ -12,6 +12,7 @@ import {
   CLAUDE_OPUS_4_5_CONFIG,
   CLAUDE_OPUS_4_6_CONFIG,
   CLAUDE_OPUS_4_7_CONFIG,
+  CLAUDE_OPUS_4_8_CONFIG,
   CLAUDE_OPUS_4_CONFIG,
   CLAUDE_SONNET_4_5_CONFIG,
   CLAUDE_SONNET_4_6_CONFIG,
@@ -105,6 +106,15 @@ export const COST_GEMINI_3_1_PRO_HIGH = {
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
 
+// Gemini 3.7 Flash
+export const COST_GEMINI_3_7_FLASH = {
+  inputTokens: 0.75,
+  outputTokens: 3.75,
+  promptCacheWriteTokens: 0.75,
+  promptCacheReadTokens: 0.15,
+  webSearchRequests: 0.01,
+} as const satisfies ModelCosts
+
 // Gemini 3.6 Flash
 export const COST_GEMINI_3_6_FLASH = {
   inputTokens: 1.5,
@@ -176,7 +186,6 @@ export const COST_GEMINI_2_0_FLASH = {
   promptCacheReadTokens: 0.025,
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
-
 const DEFAULT_UNKNOWN_MODEL_COST = COST_TIER_5_25
 
 /**
@@ -216,6 +225,10 @@ export const MODEL_COSTS: Record<ModelShortName, ModelCosts> = {
     COST_TIER_5_25,
   [firstPartyNameToCanonical(CLAUDE_OPUS_4_7_CONFIG.firstParty)]:
     COST_TIER_5_25,
+  [firstPartyNameToCanonical(CLAUDE_OPUS_4_8_CONFIG.firstParty)]:
+    COST_TIER_5_25,
+  'gemini-3.7-flash': COST_GEMINI_3_7_FLASH,
+  'google/gemini-3.7-flash': COST_GEMINI_3_7_FLASH,
   'gemini-3.6-flash': COST_GEMINI_3_6_FLASH,
   'google/gemini-3.6-flash': COST_GEMINI_3_6_FLASH,
   'gemini-3.5-flash': COST_GEMINI_3_5_FLASH,
@@ -235,43 +248,30 @@ function tokensToUSDCost(modelCosts: ModelCosts, usage: Usage): number {
     (usage.input_tokens / 1_000_000) * modelCosts.inputTokens +
     (usage.output_tokens / 1_000_000) * modelCosts.outputTokens +
     ((usage.cache_read_input_tokens ?? 0) / 1_000_000) *
-    modelCosts.promptCacheReadTokens +
+      modelCosts.promptCacheReadTokens +
     ((usage.cache_creation_input_tokens ?? 0) / 1_000_000) *
-    modelCosts.promptCacheWriteTokens +
+      modelCosts.promptCacheWriteTokens +
     (usage.server_tool_use?.web_search_requests ?? 0) *
-    modelCosts.webSearchRequests
+      modelCosts.webSearchRequests
   )
 }
 
 export function getModelCosts(model: string, usage: Usage): ModelCosts {
   const shortName = getCanonicalName(model)
 
-  // Check if this is an Opus 4.6 model with fast mode active.
+  // Check if this is an Opus 4.6 or Opus 4.8 model with fast mode active.
   if (
-    shortName === firstPartyNameToCanonical(CLAUDE_OPUS_4_6_CONFIG.firstParty)
+    shortName === firstPartyNameToCanonical(CLAUDE_OPUS_4_6_CONFIG.firstParty) ||
+    shortName === firstPartyNameToCanonical(CLAUDE_OPUS_4_8_CONFIG.firstParty)
   ) {
     const isFastMode = usage.speed === 'fast'
     return getOpus46CostTier(isFastMode)
   }
 
-  // Handle Gemini Pro context-dependent pricing
-  if (shortName === 'gemini-3.1-pro-preview') {
-    const totalInput = usage.input_tokens + (usage.cache_read_input_tokens ?? 0)
-    return totalInput > 200_000 ? COST_GEMINI_3_1_PRO_HIGH : COST_GEMINI_3_1_PRO_LOW
-  }
-
-  if (shortName === 'gemini-2.5-pro') {
-    const totalInput = usage.input_tokens + (usage.cache_read_input_tokens ?? 0)
-    return totalInput > 128_000 ? COST_GEMINI_2_5_PRO_HIGH : COST_GEMINI_2_5_PRO_LOW
-  }
-
   const costs = MODEL_COSTS[shortName]
   if (!costs) {
     trackUnknownModelCost(model, shortName)
-    return (
-      MODEL_COSTS[getCanonicalName(getDefaultMainLoopModelSetting())] ??
-      DEFAULT_UNKNOWN_MODEL_COST
-    )
+    return DEFAULT_UNKNOWN_MODEL_COST
   }
   return costs
 }

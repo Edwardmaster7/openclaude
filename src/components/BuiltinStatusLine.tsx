@@ -16,7 +16,9 @@ import { calculateContextPercentages, getContextWindowForModel } from '../utils/
 import { isFullscreenEnvEnabled } from '../utils/fullscreen.js';
 import { getRuntimeMainLoopModel, renderModelName } from '../utils/model/model.js';
 import type { Theme } from '../utils/theme.js';
-import { doesMostRecentAssistantMessageExceed200k, getCurrentUsage } from '../utils/tokens.js';
+import { doesMostRecentAssistantMessageExceed200k, getCurrentUsage, tokenCountWithEstimation } from '../utils/tokens.js';
+import { isOfflineMode } from '../services/api/offlineState.js';
+import { getActiveProviderProfile } from '../utils/providerProfiles.js';
 import { formatTokenCount } from '../utils/format.js';
 
 /**
@@ -46,6 +48,9 @@ export type StatusSegment = {
 const SEPARATOR = ' · ';
 export type BuiltinStatusData = {
   modelName: string;
+  providerName: string;
+  offline: boolean;
+  tokenCount: number;
   /** 0–100, or null before the first assistant turn. */
   contextUsedPercent: number | null;
   /** Current input token count (including cache), or null. */
@@ -62,11 +67,24 @@ export type BuiltinStatusData = {
   } | null;
 };
 export function buildBuiltinStatusSegments(data: BuiltinStatusData): StatusSegment[] {
-  const segments: StatusSegment[] = [{
+  const segments: StatusSegment[] = [];
+
+  if (data.offline) {
+    segments.push({
+      key: 'offline',
+      priority: 0,
+      text: '[OFFLINE]',
+      color: 'error'
+    });
+  }
+
+  const modelText = data.providerName ? `${data.providerName}: ${data.modelName}` : data.modelName;
+  segments.push({
     key: 'model',
-    priority: 0,
-    text: data.modelName
-  }];
+    priority: 1,
+    text: modelText
+  });
+
   if (data.contextUsedPercent !== null && data.contextInputTokens !== null && data.contextWindow !== null) {
     const pct = data.contextUsedPercent;
     const roundedPct = Math.round(pct);
@@ -91,20 +109,22 @@ export function buildBuiltinStatusSegments(data: BuiltinStatusData): StatusSegme
       color: roundedPct >= 90 ? 'error' : roundedPct >= 70 ? 'warning' : undefined
     });
   }
-  if (data.costUSD > 0) {
-    const cost = data.costUSD;
+  
+  if (data.tokenCount > 0 || data.costUSD > 0) {
+    const costText = data.costUSD >= 100 ? `$${data.costUSD.toFixed(0)}` : `$${data.costUSD.toFixed(2)}`;
     segments.push({
       key: 'cost',
       priority: 2,
-      text: cost >= 100 ? `$${cost.toFixed(0)}` : `$${cost.toFixed(2)}`,
-      shortText: `$${cost.toFixed(0)}`
+      text: data.tokenCount > 0 ? `${data.tokenCount} tokens (${costText})` : costText,
+      shortText: `$${data.costUSD.toFixed(0)}`
     });
   }
+  
   if (data.rateLimit) {
     const pct = Math.round(data.rateLimit.usedPercent);
     segments.push({
       key: 'rateLimit',
-      priority: 3,
+      priority: 4,
       text: `${data.rateLimit.label} ${pct}%`,
       color: pct >= 85 ? 'error' : pct >= 60 ? 'warning' : undefined
     });
@@ -150,7 +170,7 @@ export function fitSegments(segments: StatusSegment[], maxWidth: number): Status
   while (result.length > 1 && !fits(withMarker())) {
     let dropIndex = 0;
     for (let i = 1; i < result.length; i++) {
-      if (result[i]!.priority > result[dropIndex]!.priority) dropIndex = i;
+      if (result[i]!.priority >= result[dropIndex]!.priority) dropIndex = i;
     }
     result.splice(dropIndex, 1);
     droppedAny = true;
@@ -201,8 +221,21 @@ function BuiltinStatusLineInner({
     const inputTokens = currentUsage
       ? currentUsage.input_tokens + currentUsage.cache_creation_input_tokens + currentUsage.cache_read_input_tokens
       : null;
+
+    let providerName = '';
+    try {
+      const profile = getActiveProviderProfile();
+      if (profile) {
+        providerName = profile.name || profile.id;
+      }
+    } catch {
+      // Ignored if bootstrapping
+    }
     return {
       modelName: renderModelName(runtimeModel),
+      providerName,
+      offline: isOfflineMode(),
+      tokenCount: tokenCountWithEstimation(msgs),
       contextUsedPercent: contextPercentages.used,
       contextInputTokens: inputTokens,
       contextWindow: contextWindowSize,

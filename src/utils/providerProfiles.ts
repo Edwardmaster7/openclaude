@@ -927,6 +927,7 @@ export function getActiveProviderProfile(
     userSettings?.activeProviderProfileId
 
   const activeId = trimOrUndefined(settingsActiveId || config.activeProviderProfileId)
+
   // Explicit Anthropic selection: do not fall back to the first saved profile.
   if (activeId === ANTHROPIC_DEFAULT_PROFILE_ID) {
     if (userSettings?.isolateProviderSessions) {

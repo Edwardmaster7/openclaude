@@ -47,8 +47,18 @@ export interface PruningOptions {
 }
 
 const STOP_WORDS = new Set([
+  // English common stop words
   'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had',
   'her', 'was', 'one', 'our', 'out', 'has', 'have', 'they', 'will', 'would',
+  'with', 'this', 'that', 'from', 'your', 'them', 'been', 'there', 'what',
+  // Programming language common keywords (avoid skewing code snippet relevance)
+  'const', 'function', 'return', 'export', 'import', 'async', 'await',
+  'class', 'interface', 'public', 'private', 'default', 'module', 'undefined',
+  'null', 'string', 'number', 'boolean', 'object', 'type', 'true', 'false',
+  // Portuguese common stop words
+  'para', 'como', 'esta', 'este', 'isso', 'mais', 'pelo', 'pela', 'como',
+  'com', 'sem', 'que', 'uma', 'uns', 'umas', 'entre', 'sobre', 'mesmo',
+  'outra', 'outro', 'sua', 'seu', 'suas', 'seus', 'voces', 'voce',
 ])
 
 function extractKeywords(text: string): Set<string> {

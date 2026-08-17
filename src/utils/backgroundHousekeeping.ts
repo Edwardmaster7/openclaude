@@ -2,6 +2,7 @@ import { feature } from 'bun:bundle'
 import { initAutoDream } from '../services/autoDream/autoDream.js'
 import { initMagicDocs } from '../services/MagicDocs/magicDocs.js'
 import { initSkillImprovement } from './hooks/skillImprovement.js'
+import { logForDebugging } from './debug.js'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 const extractMemoriesModule = feature('EXTRACT_MEMORIES')
@@ -28,9 +29,36 @@ const RECURRING_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000
 // 10 minutes after start.
 const DELAY_VERY_SLOW_OPERATIONS_THAT_HAPPEN_EVERY_SESSION = 10 * 60 * 1000
 
+/**
+ * Fire-and-forget helper that captures and logs any errors instead of
+ * silently swallowing them (avoids the void-async footgun).
+ */
+function safeInit(fn: () => Promise<void> | void, name: string): void {
+  try {
+    const res = fn()
+    if (res && typeof res.catch === 'function') {
+      res.catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e)
+        logForDebugging(`[housekeeping] ${name} init failed: ${msg}`)
+      })
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    logForDebugging(`[housekeeping] ${name} init failed: ${msg}`)
+  }
+}
+
+/**
+ * Returns true when an interactive session had user activity in the last
+ * minute — used to defer slow background ops until the user is idle.
+ */
+function isUserRecentlyActive(): boolean {
+  return getIsInteractive() && getLastInteractionTime() > Date.now() - 1000 * 60
+}
+
 export function startBackgroundHousekeeping(): void {
-  void initMagicDocs()
-  void initSkillImprovement()
+  safeInit(initMagicDocs, 'MagicDocs')
+  safeInit(initSkillImprovement, 'SkillImprovement')
   if (feature('EXTRACT_MEMORIES')) {
     extractMemoriesModule!.initExtractMemories()
   }
@@ -42,11 +70,8 @@ export function startBackgroundHousekeeping(): void {
 
   let needsCleanup = true
   async function runVerySlowOps(): Promise<void> {
-    // If the user did something in the last minute, don't make them wait for these slow operations to run.
-    if (
-      getIsInteractive() &&
-      getLastInteractionTime() > Date.now() - 1000 * 60
-    ) {
+    // Defer if the user interacted in the last minute.
+    if (isUserRecentlyActive()) {
       setTimeout(
         runVerySlowOps,
         DELAY_VERY_SLOW_OPERATIONS_THAT_HAPPEN_EVERY_SESSION,
@@ -59,11 +84,8 @@ export function startBackgroundHousekeeping(): void {
       await cleanupOldMessageFilesInBackground()
     }
 
-    // If the user did something in the last minute, don't make them wait for these slow operations to run.
-    if (
-      getIsInteractive() &&
-      getLastInteractionTime() > Date.now() - 1000 * 60
-    ) {
+    // Re-check: user may have become active while cleanupOldMessageFiles ran.
+    if (isUserRecentlyActive()) {
       setTimeout(
         runVerySlowOps,
         DELAY_VERY_SLOW_OPERATIONS_THAT_HAPPEN_EVERY_SESSION,

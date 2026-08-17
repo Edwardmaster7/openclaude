@@ -45,7 +45,7 @@ mock.module('./quests.js', () => ({
   getTodayString: () => '2026-06-22',
 }))
 
-import { fireCompanionObserver, notifyFeedbackConfirm } from './observer.js'
+import { fireCompanionObserver, notifyFeedbackConfirm, notifyAdCreditEarned } from './observer.js'
 
 function getTodayString(): string {
   const now = new Date()
@@ -582,6 +582,35 @@ describe('observer reactions', () => {
       expect(result).toContain('Echobud')
       expect(mockConfig.companion.xp).toBe(12) // 10 + 2
       expect(mockConfig.companionStats.totalFeedbackConfirms).toBe(1)
+    })
+
+    it('notifyAdCreditEarned returns formatted speech string and grants +0.1 XP', () => {
+      const result = notifyAdCreditEarned(1000)
+
+      expect(result).toBe('Echobud: 💰 Crédito OpenGateway recebido! (+$0.001000)')
+      expect(mockConfig.companion.xp).toBeCloseTo(10.1, 2)
+    })
+
+    it('notifyAdCreditEarned defaults to 0.001 when earnedMicro is not provided', () => {
+      const result = notifyAdCreditEarned()
+
+      expect(result).toBe('Echobud: 💰 Crédito OpenGateway recebido! (+$0.001)')
+      expect(mockConfig.companion.xp).toBeCloseTo(10.1, 2)
+    })
+
+    it('notifyAdCreditEarned returns empty string when companion is muted', () => {
+      mockConfig.companionMuted = true
+      const result = notifyAdCreditEarned(1000)
+
+      expect(result).toBe('')
+      expect(mockConfig.companion.xp).toBe(10)
+    })
+
+    it('notifyAdCreditEarned returns empty string when companion is null', () => {
+      mockConfig.companion = null
+      const result = notifyAdCreditEarned(1000)
+
+      expect(result).toBe('')
     })
   })
 

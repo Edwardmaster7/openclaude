@@ -60,8 +60,13 @@ import {
 const abortError = () => new APIUserAbortError()
 
 const DEFAULT_MAX_RETRIES = 10
-const MAX_CONFIGURABLE_RETRIES = 100
+// Set high enough to be effectively unlimited for normal users. Combined with
+// OPENCLAUDE_MAX_RETRIES this lets callers disable or massively raise the API
+// retry ceiling without rebuilding. Real upper bound is the runtime's safe
+// integer range; 999_999 leaves headroom on top of practical use cases.
+const MAX_CONFIGURABLE_RETRIES = 999_999
 const FLOOR_OUTPUT_TOKENS = 3000
+// Optional env var OPENCLAUDE_MAX_529_RETRIES overrides this; 0 disables.
 const MAX_529_RETRIES = 3
 export const DEFAULT_RETRY_DELAY_MS = 500
 export const BASE_DELAY_MS = DEFAULT_RETRY_DELAY_MS
@@ -106,15 +111,58 @@ function shouldRetry529(querySource: QuerySource | undefined): boolean {
 // environment does not mark the session idle mid-wait.
 // TODO(ANT-344): the keep-alive via SystemAPIErrorMessage yields is a stopgap
 // until there's a dedicated keep-alive channel.
-const PERSISTENT_MAX_BACKOFF_MS = 5 * 60 * 1000
-const PERSISTENT_RESET_CAP_MS = 6 * 60 * 60 * 1000
+// CLOLimits — ponytail: persistent caps were hardcoded; surface as env vars
+// so users can lift them. 0 disables the ceiling entirely. Defaults unchanged.
+const PERSISTENT_MAX_ATTEMPTS_DEFAULT = 100
+const PERSISTENT_MAX_BACKOFF_MS_DEFAULT = 5 * 60 * 1000
+const PERSISTENT_RESET_CAP_MS_DEFAULT = 6 * 60 * 60 * 1000
+
+function resolveEnvInt(
+  name: string,
+  defaultValue: number,
+  allowZero = true,
+): number {
+  const raw = process.env[name]
+  if (raw === undefined || raw === '') return defaultValue
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || (!allowZero && parsed === 0)) {
+    logForDebugging(
+      `${name} invalid value "${raw}" (using default: ${defaultValue})`,
+    )
+    return defaultValue
+  }
+  return parsed
+}
+
+const PERSISTENT_MAX_BACKOFF_MS = resolveEnvInt(
+  'OPENCLAUDE_PERSISTENT_MAX_BACKOFF_MS',
+  PERSISTENT_MAX_BACKOFF_MS_DEFAULT,
+)
+const PERSISTENT_RESET_CAP_MS = resolveEnvInt(
+  'OPENCLAUDE_PERSISTENT_RESET_CAP_MS',
+  PERSISTENT_RESET_CAP_MS_DEFAULT,
+)
 const HEARTBEAT_INTERVAL_MS = 30_000
-const PERSISTENT_MAX_ATTEMPTS = 100
+function getPersistentMaxAttempts(): number {
+  const v = resolveEnvInt(
+    'OPENCLAUDE_PERSISTENT_MAX_ATTEMPTS',
+    PERSISTENT_MAX_ATTEMPTS_DEFAULT,
+  )
+  // ponytail: 0 → no cap. Hard floor was originally 100; persistent mode
+  // can wait 5min × 100 = ~8h per the doc comment, but the user sometimes
+  // wants a fully unbounded wait when they intentionally set unattended+no
+  // human in the loop. They asked for a way to lift the ceiling, this is
+  // it. If you re-add a ceiling, gate it on isPersistentRetryEnabled().
+  return v === 0 ? Number.POSITIVE_INFINITY : v
+}
 // Exposed for unit-test assertion only. The persistent retry cap itself is
 // driven by isPersistentRetryEnabled() — there is no runtime override seam
 // (tests must enable UNATTENDED_RETRY via `bun test --feature=UNATTENDED_RETRY`
 // and set CLAUDE_CODE_UNATTENDED_RETRY to exercise this path).
-export { PERSISTENT_MAX_ATTEMPTS as _PERSISTENT_MAX_ATTEMPTS_FOR_TEST, isPersistentRetryEnabled }
+export {
+  getPersistentMaxAttempts as _PERSISTENT_MAX_ATTEMPTS_FOR_TEST,
+  isPersistentRetryEnabled,
+}
 
 function isPersistentRetryEnabled(): boolean {
   return feature('UNATTENDED_RETRY')
@@ -411,7 +459,7 @@ export async function* withRetry<T>(
           (!isClaudeAISubscriber() && isNonCustomOpusModel(options.model)))
       ) {
         consecutive529Errors++
-        if (consecutive529Errors >= MAX_529_RETRIES) {
+        if (consecutive529Errors >= getMax529Retries()) {
           // Check if fallback model is specified
           if (options.fallbackModel) {
             logEvent('tengu_api_opus_fallback_triggered', {
@@ -453,14 +501,14 @@ export async function* withRetry<T>(
       // NOTE: the "~8 hours" estimate applies only to the exponential-backoff path. The
       // reset-delay path can wait up to PERSISTENT_RESET_CAP_MS (6 hours) per attempt, so
       // exhausting 100 attempts can take far longer.
-      if (persistent && persistentAttempt >= PERSISTENT_MAX_ATTEMPTS) {
+      if (persistent && persistentAttempt >= getPersistentMaxAttempts()) {
         logEvent('tengu_api_persistent_retry_cap_reached', {
           error: (error as APIError).message as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
           status: (error as APIError).status,
           model: retryContext.model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
           persistentAttempt,
           PERSISTENT_MAX_BACKOFF_MS,
-          PERSISTENT_MAX_ATTEMPTS,
+          PERSISTENT_MAX_ATTEMPTS: getPersistentMaxAttempts(),
           provider: getAPIProviderForStatsig(),
         })
         throw new CannotRetryError(error, retryContext)
@@ -991,6 +1039,22 @@ export function getDefaultMaxRetries(): number {
   }
 
   return DEFAULT_MAX_RETRIES
+}
+
+// ponytail: surfacing a previously-hardcoded second ceiling. 0 disables
+// the 529→fallback transition entirely, useful when the user prefers to
+// stay on the primary model no matter how long overloads last.
+export function getMax529Retries(): number {
+  const raw = process.env.OPENCLAUDE_MAX_529_RETRIES
+  if (raw === undefined || raw === '') return MAX_529_RETRIES
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    logForDebugging(
+      `OPENCLAUDE_MAX_529_RETRIES invalid value "${raw}" (using default: ${MAX_529_RETRIES})`,
+    )
+    return MAX_529_RETRIES
+  }
+  return parsed
 }
 
 export function getDefaultRetryDelayMs(): number {

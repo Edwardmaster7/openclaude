@@ -1,5 +1,13 @@
-import { BROWSER_TOOLS } from '@ant/claude-for-chrome-mcp'
 import { chmod, mkdir, readFile, writeFile } from 'fs/promises'
+import { createRequire } from 'module'
+const require = createRequire(import.meta.url)
+
+let BROWSER_TOOLS: Array<{ name: string }> = []
+try {
+  BROWSER_TOOLS = require('@ant/claude-for-chrome-mcp').BROWSER_TOOLS
+} catch {
+  // Ignora se o módulo não estiver instalado (ambiente de desenvolvimento aberto)
+}
 import { homedir } from 'os'
 import { join } from 'path'
 import { fileURLToPath } from 'url'

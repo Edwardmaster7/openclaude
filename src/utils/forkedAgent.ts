@@ -26,6 +26,7 @@ import type { AgentId } from '../types/ids.js'
 import type { Message } from '../types/message.js'
 import { createChildAbortController } from './abortController.js'
 import { logForDebugging } from './debug.js'
+import { resetDoomLoop } from './doomLoop.js'
 import { cloneFileStateCache } from './fileStateCache.js'
 import type { REPLHookContext } from './hooks/postSamplingHooks.js'
 import {
@@ -78,6 +79,10 @@ export function saveCacheSafeParams(params: CacheSafeParams | null): void {
 
 export function getLastCacheSafeParams(): CacheSafeParams | null {
   return lastCacheSafeParams
+}
+
+export function clearCacheSafeParams(): void {
+  lastCacheSafeParams = null
 }
 
 export type ForkedAgentParams = {
@@ -624,6 +629,10 @@ export async function runForkedAgent({
       }
     }
   } finally {
+    // Clean up doom loop state for this subagent if it had a specific agentId
+    if (isolatedToolUseContext.agentId) {
+      resetDoomLoop(isolatedToolUseContext.agentId)
+    }
     // Release cloned file state cache memory (same pattern as runAgent.ts)
     isolatedToolUseContext.readFileState.clear()
     // Release the cloned fork context messages

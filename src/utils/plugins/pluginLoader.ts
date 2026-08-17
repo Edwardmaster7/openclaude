@@ -2176,7 +2176,7 @@ async function loadPluginsFromMarketplaces({
         const fakeEntry: PluginMarketplaceEntry = {
           name: pluginName!,
           source: '.',
-          strict: true,
+          strict: false,
         }
 
         return cacheOnly

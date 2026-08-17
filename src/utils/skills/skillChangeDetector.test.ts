@@ -183,7 +183,7 @@ describe('skillChangeDetector reload batching', () => {
         path.endsWith(platformPath.join('.openclaude', 'commands')),
       ),
     ).toBe(true)
-    expect(watchOptions.depth).toBeUndefined()
+    expect(watchOptions.depth).toBe(2)
   })
 
   test('batches rapid reload requests into one hook/cache clear/notification', async () => {

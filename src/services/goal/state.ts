@@ -1,9 +1,29 @@
 import { randomUUID } from 'crypto'
 
+import { logForDebugging } from '../../utils/debug.js'
 import type { GoalDecision, GoalState } from './types.js'
 
 export const DEFAULT_GOAL_MAX_TURNS = 50
 export const MAX_GOAL_CONDITION_CHARS = 4_000
+
+/**
+ * ponytail: env override so users can lift the 50-turn cap without code edits.
+ * OPENCLAUDE_GOAL_MAX_TURNS=0 → no cap. Default unchanged. Upper bound mirrors
+ * withRetry.ts so a single ceiling governs all removable caps.
+ */
+export function resolveGoalMaxTurns(): number {
+  const raw = process.env.OPENCLAUDE_GOAL_MAX_TURNS
+  if (raw === undefined || raw === '') return DEFAULT_GOAL_MAX_TURNS
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    logForDebugging(
+      `OPENCLAUDE_GOAL_MAX_TURNS invalid value "${raw}" (using default: ${DEFAULT_GOAL_MAX_TURNS})`,
+    )
+    return DEFAULT_GOAL_MAX_TURNS
+  }
+  if (parsed === 0) return Number.POSITIVE_INFINITY
+  return parsed
+}
 
 export function nowIso(): string {
   return new Date().toISOString()
@@ -40,7 +60,7 @@ export function validateGoalCondition(input: string):
 export function createGoalState(
   condition: string,
   now: string = nowIso(),
-  maxTurns = DEFAULT_GOAL_MAX_TURNS,
+  maxTurns?: number,
 ): GoalState {
   return {
     id: randomUUID(),
@@ -50,7 +70,7 @@ export function createGoalState(
     updatedAt: now,
     startedAt: now,
     turnCount: 0,
-    maxTurns,
+    maxTurns: maxTurns ?? resolveGoalMaxTurns(),
     evaluatorFailures: 0,
   }
 }

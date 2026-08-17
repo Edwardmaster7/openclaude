@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 
-import { confirmTip, fetchNextTip, sanitizeForAds } from './ads.js'
+import { confirmTip, detectProjectTechnologies, fetchNextTip, sanitizeForAds, type SessionContext } from './ads.js'
 
 describe('sanitizeForAds', () => {
   test('passes through ordinary prompt text', () => {
@@ -94,11 +94,41 @@ describe('fetchNextTip / confirmTip (mocked fetch)', () => {
     expect(tip).toMatchObject({ name: 'Vultr', token: 'tok', dwellMs: 4000 })
   })
 
-  test('GETs with no body when there is no prompt', async () => {
+  test('POSTs context with technologies when there is no prompt', async () => {
     stubFetch(200, TIP)
     await fetchNextTip('code', 'openclaude')
-    expect(captured.method).toBe('GET')
-    expect(captured.body).toBeUndefined()
+    expect(captured.method).toBe('POST')
+    expect(captured.body).toBeDefined()
+    const context = (captured.body as { context: { technologies?: string[] } }).context
+    expect(Array.isArray(context.technologies)).toBe(true)
+    expect(context.technologies).toContain('nodejs')
+  })
+
+  test('POSTs session context parameters when sessionContext is provided', async () => {
+    stubFetch(200, TIP)
+    const sessionContext: SessionContext = {
+      turnCount: 3,
+      sessionDurationSec: 120,
+      seenImpressionIds: ['imp1', 'imp2'],
+    }
+    await fetchNextTip('code', 'openclaude', 'hello', sessionContext)
+    expect(captured.method).toBe('POST')
+    expect(captured.body).toBeDefined()
+    expect(captured.body?.turn_count).toBe(3)
+    expect(captured.body?.session_duration_sec).toBe(120)
+    expect(captured.body?.seen_impression_ids).toEqual(['imp1', 'imp2'])
+  })
+
+  test('omits seen_impression_ids if empty array', async () => {
+    stubFetch(200, TIP)
+    const sessionContext: SessionContext = {
+      turnCount: 1,
+      seenImpressionIds: [],
+    }
+    await fetchNextTip('code', 'openclaude', undefined, sessionContext)
+    expect(captured.method).toBe('POST')
+    expect(captured.body?.turn_count).toBe(1)
+    expect(captured.body?.seen_impression_ids).toBeUndefined()
   })
 
   test('returns null on a non-OK response', async () => {
@@ -123,5 +153,13 @@ describe('fetchNextTip / confirmTip (mocked fetch)', () => {
     expect(captured.method).toBe('POST')
     expect(captured.url).toContain('/api/ads/confirm')
     expect(r).toEqual({ status: 'confirmed', earnedMicro: 1000, balanceMicro: 5000 })
+  })
+})
+
+describe('detectProjectTechnologies', () => {
+  test('detects nodejs and typescript in current repository', () => {
+    const techs = detectProjectTechnologies()
+    expect(techs).toContain('nodejs')
+    expect(techs).toContain('typescript')
   })
 })
