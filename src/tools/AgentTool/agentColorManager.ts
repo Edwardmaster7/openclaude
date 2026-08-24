@@ -10,6 +10,15 @@ export type AgentColorName =
   | 'orange'
   | 'pink'
   | 'cyan'
+  | 'magenta'
+  | 'teal'
+  | 'lime'
+  | 'indigo'
+  | 'violet'
+  | 'rose'
+  | 'amber'
+  | 'emerald'
+  | 'slate'
 
 export const AGENT_COLORS: readonly AgentColorName[] = [
   'red',
@@ -20,6 +29,15 @@ export const AGENT_COLORS: readonly AgentColorName[] = [
   'orange',
   'pink',
   'cyan',
+  'magenta',
+  'teal',
+  'lime',
+  'indigo',
+  'violet',
+  'rose',
+  'amber',
+  'emerald',
+  'slate',
 ] as const
 
 export const AGENT_COLOR_TO_THEME_COLOR = {
@@ -31,6 +49,15 @@ export const AGENT_COLOR_TO_THEME_COLOR = {
   orange: 'orange_FOR_SUBAGENTS_ONLY',
   pink: 'pink_FOR_SUBAGENTS_ONLY',
   cyan: 'cyan_FOR_SUBAGENTS_ONLY',
+  magenta: 'magenta_FOR_SUBAGENTS_ONLY',
+  teal: 'teal_FOR_SUBAGENTS_ONLY',
+  lime: 'lime_FOR_SUBAGENTS_ONLY',
+  indigo: 'indigo_FOR_SUBAGENTS_ONLY',
+  violet: 'violet_FOR_SUBAGENTS_ONLY',
+  rose: 'rose_FOR_SUBAGENTS_ONLY',
+  amber: 'amber_FOR_SUBAGENTS_ONLY',
+  emerald: 'emerald_FOR_SUBAGENTS_ONLY',
+  slate: 'slate_FOR_SUBAGENTS_ONLY',
 } as const satisfies Record<AgentColorName, keyof Theme>
 
 export function getAgentColor(agentType: string): keyof Theme | undefined {

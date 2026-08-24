@@ -50,6 +50,15 @@ export type Theme = {
   orange_FOR_SUBAGENTS_ONLY: string
   pink_FOR_SUBAGENTS_ONLY: string
   cyan_FOR_SUBAGENTS_ONLY: string
+  magenta_FOR_SUBAGENTS_ONLY: string
+  teal_FOR_SUBAGENTS_ONLY: string
+  lime_FOR_SUBAGENTS_ONLY: string
+  indigo_FOR_SUBAGENTS_ONLY: string
+  violet_FOR_SUBAGENTS_ONLY: string
+  rose_FOR_SUBAGENTS_ONLY: string
+  amber_FOR_SUBAGENTS_ONLY: string
+  emerald_FOR_SUBAGENTS_ONLY: string
+  slate_FOR_SUBAGENTS_ONLY: string
   // Grove colors
   professionalBlue: string
   // Chrome colors
@@ -168,6 +177,15 @@ const lightTheme: Theme = {
   orange_FOR_SUBAGENTS_ONLY: 'rgb(234,88,12)', // Orange 600
   pink_FOR_SUBAGENTS_ONLY: 'rgb(219,39,119)', // Pink 600
   cyan_FOR_SUBAGENTS_ONLY: 'rgb(8,145,178)', // Cyan 600
+  magenta_FOR_SUBAGENTS_ONLY: 'rgb(192,38,211)', // Magenta 600
+  teal_FOR_SUBAGENTS_ONLY: 'rgb(13,148,136)', // Teal 600
+  lime_FOR_SUBAGENTS_ONLY: 'rgb(101,163,13)', // Lime 600
+  indigo_FOR_SUBAGENTS_ONLY: 'rgb(79,70,229)', // Indigo 600
+  violet_FOR_SUBAGENTS_ONLY: 'rgb(124,58,237)', // Violet 600
+  rose_FOR_SUBAGENTS_ONLY: 'rgb(225,29,72)', // Rose 600
+  amber_FOR_SUBAGENTS_ONLY: 'rgb(217,119,6)', // Amber 600
+  emerald_FOR_SUBAGENTS_ONLY: 'rgb(5,150,105)', // Emerald 600
+  slate_FOR_SUBAGENTS_ONLY: 'rgb(71,85,105)', // Slate 600
   // Grove colors
   professionalBlue: 'rgb(106,155,204)',
   // Chrome colors
@@ -252,6 +270,15 @@ const lightAnsiTheme: Theme = {
   orange_FOR_SUBAGENTS_ONLY: 'ansi:redBright',
   pink_FOR_SUBAGENTS_ONLY: 'ansi:magentaBright',
   cyan_FOR_SUBAGENTS_ONLY: 'ansi:cyan',
+  magenta_FOR_SUBAGENTS_ONLY: 'ansi:magenta',
+  teal_FOR_SUBAGENTS_ONLY: 'ansi:cyan',
+  lime_FOR_SUBAGENTS_ONLY: 'ansi:greenBright',
+  indigo_FOR_SUBAGENTS_ONLY: 'ansi:blue',
+  violet_FOR_SUBAGENTS_ONLY: 'ansi:magenta',
+  rose_FOR_SUBAGENTS_ONLY: 'ansi:red',
+  amber_FOR_SUBAGENTS_ONLY: 'ansi:yellow',
+  emerald_FOR_SUBAGENTS_ONLY: 'ansi:green',
+  slate_FOR_SUBAGENTS_ONLY: 'ansi:blackBright',
   // Grove colors
   professionalBlue: 'ansi:blueBright',
   // Chrome colors
@@ -335,6 +362,15 @@ const darkAnsiTheme: Theme = {
   orange_FOR_SUBAGENTS_ONLY: 'ansi:redBright',
   pink_FOR_SUBAGENTS_ONLY: 'ansi:magentaBright',
   cyan_FOR_SUBAGENTS_ONLY: 'ansi:cyanBright',
+  magenta_FOR_SUBAGENTS_ONLY: 'ansi:magentaBright',
+  teal_FOR_SUBAGENTS_ONLY: 'ansi:cyanBright',
+  lime_FOR_SUBAGENTS_ONLY: 'ansi:greenBright',
+  indigo_FOR_SUBAGENTS_ONLY: 'ansi:blueBright',
+  violet_FOR_SUBAGENTS_ONLY: 'ansi:magentaBright',
+  rose_FOR_SUBAGENTS_ONLY: 'ansi:redBright',
+  amber_FOR_SUBAGENTS_ONLY: 'ansi:yellowBright',
+  emerald_FOR_SUBAGENTS_ONLY: 'ansi:greenBright',
+  slate_FOR_SUBAGENTS_ONLY: 'ansi:white',
   // Grove colors
   professionalBlue: 'rgb(106,155,204)',
   // Chrome colors
@@ -418,6 +454,15 @@ const lightDaltonizedTheme: Theme = {
   orange_FOR_SUBAGENTS_ONLY: 'rgb(255,128,0)', // True orange
   pink_FOR_SUBAGENTS_ONLY: 'rgb(255,102,178)', // Adjusted pink
   cyan_FOR_SUBAGENTS_ONLY: 'rgb(0,178,178)', // Adjusted cyan
+  magenta_FOR_SUBAGENTS_ONLY: 'rgb(204,0,204)', // Adjusted magenta
+  teal_FOR_SUBAGENTS_ONLY: 'rgb(0,137,123)', // Adjusted teal
+  lime_FOR_SUBAGENTS_ONLY: 'rgb(130,178,0)', // Adjusted lime
+  indigo_FOR_SUBAGENTS_ONLY: 'rgb(79,70,229)', // Pure Indigo
+  violet_FOR_SUBAGENTS_ONLY: 'rgb(124,58,237)', // Pure Violet
+  rose_FOR_SUBAGENTS_ONLY: 'rgb(225,29,72)', // Pure Rose
+  amber_FOR_SUBAGENTS_ONLY: 'rgb(217,119,6)', // Pure Amber
+  emerald_FOR_SUBAGENTS_ONLY: 'rgb(0,153,153)', // Daltonized Green/Blue
+  slate_FOR_SUBAGENTS_ONLY: 'rgb(71,85,105)', // Pure Slate
   // Grove colors
   professionalBlue: 'rgb(106,155,204)',
   // Chrome colors
@@ -501,6 +546,15 @@ const darkTheme: Theme = {
   orange_FOR_SUBAGENTS_ONLY: 'rgb(234,88,12)', // Orange 600
   pink_FOR_SUBAGENTS_ONLY: 'rgb(219,39,119)', // Pink 600
   cyan_FOR_SUBAGENTS_ONLY: 'rgb(8,145,178)', // Cyan 600
+  magenta_FOR_SUBAGENTS_ONLY: 'rgb(217,70,239)', // Magenta 500
+  teal_FOR_SUBAGENTS_ONLY: 'rgb(20,184,166)', // Teal 500
+  lime_FOR_SUBAGENTS_ONLY: 'rgb(132,204,22)', // Lime 500
+  indigo_FOR_SUBAGENTS_ONLY: 'rgb(99,102,241)', // Indigo 500
+  violet_FOR_SUBAGENTS_ONLY: 'rgb(139,92,246)', // Violet 500
+  rose_FOR_SUBAGENTS_ONLY: 'rgb(244,63,94)', // Rose 500
+  amber_FOR_SUBAGENTS_ONLY: 'rgb(245,158,11)', // Amber 500
+  emerald_FOR_SUBAGENTS_ONLY: 'rgb(16,185,129)', // Emerald 500
+  slate_FOR_SUBAGENTS_ONLY: 'rgb(100,116,139)', // Slate 500
   // Grove colors
   professionalBlue: 'rgb(106,155,204)',
   // Chrome colors
@@ -584,6 +638,15 @@ const darkDaltonizedTheme: Theme = {
   orange_FOR_SUBAGENTS_ONLY: 'rgb(255,178,102)', // Bright orange
   pink_FOR_SUBAGENTS_ONLY: 'rgb(255,153,204)', // Bright pink
   cyan_FOR_SUBAGENTS_ONLY: 'rgb(102,204,204)', // Bright cyan
+  magenta_FOR_SUBAGENTS_ONLY: 'rgb(255,102,255)', // Bright magenta
+  teal_FOR_SUBAGENTS_ONLY: 'rgb(77,182,172)', // Bright teal
+  lime_FOR_SUBAGENTS_ONLY: 'rgb(194,230,102)', // Bright lime
+  indigo_FOR_SUBAGENTS_ONLY: 'rgb(102,178,255)', // Bright Indigo
+  violet_FOR_SUBAGENTS_ONLY: 'rgb(178,102,255)', // Bright Violet
+  rose_FOR_SUBAGENTS_ONLY: 'rgb(255,102,102)', // Bright Rose
+  amber_FOR_SUBAGENTS_ONLY: 'rgb(255,204,0)', // Bright Amber
+  emerald_FOR_SUBAGENTS_ONLY: 'rgb(0,204,204)', // Daltonized Bright Green/Blue
+  slate_FOR_SUBAGENTS_ONLY: 'rgb(100,116,139)', // Pure Slate
   // Grove colors
   professionalBlue: 'rgb(106,155,204)',
   // Chrome colors
