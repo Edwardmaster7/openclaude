@@ -392,11 +392,14 @@ export function getGitDiff(baseRef: string, headRef = 'HEAD'): string {
   const diff = spawnSync(
     'git',
     ['diff', '--unified=0', '--no-ext-diff', `${base}...${headRef}`],
-    { encoding: 'utf8' },
+    // Default Node maxBuffer (1MB) truncates the diff on large PRs (e.g. an
+    // upstream sync spanning hundreds of files), which then surfaces as a
+    // spurious "git diff failed" error with the diff itself as the message.
+    { encoding: 'utf8', maxBuffer: 200 * 1024 * 1024 },
   )
 
   if (diff.status !== 0) {
-    throw new Error(`git diff failed: ${diff.stderr.trim() || diff.stdout.trim()}`)
+    throw new Error(`git diff failed: ${diff.stderr.trim() || diff.error?.message || 'unknown error'}`)
   }
 
   return diff.stdout
