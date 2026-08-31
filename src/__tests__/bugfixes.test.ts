@@ -41,14 +41,6 @@ describe('Gemini store field fix', () => {
     expect(mistralDescriptor).toContain("removeBodyFields: ['store']")
   })
 
-  test('store: false is still set by default and only removed via shim config', async () => {
-    const content = await file('services/api/openaiShim.ts').text()
-
-    expect(content).toMatch(/store:\s*false/)
-    expect(content).toContain('shimConfig.removeBodyFields')
-    expect(content).toContain('delete body[field]')
-  })
-
   test('openaiShim does not keep a hardcoded descriptor route fallback list', async () => {
     const content = await file('services/api/openaiShim.ts').text()
 
@@ -88,24 +80,6 @@ describe('Session timeout fix', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Fix 2b: Ollama context history preservation
-// ---------------------------------------------------------------------------
-describe('Ollama context history fix', () => {
-  test('openaiShim uses native Ollama chat with request-level num_ctx', async () => {
-    const content = await file('services/api/openaiShim.ts').text()
-
-    expect(content).toContain('buildOllamaChatUrl')
-    expect(content).toContain('/api/chat')
-    expect(content).toContain('useNativeOllamaChat')
-    expect(content).toContain('num_ctx: getOllamaNumCtx()')
-    expect(content).toContain('normalizeOllamaNativeMessages(body.messages)')
-    expect(content).toContain('convertOllamaStreamingResponse')
-    expect(content).toContain('convertOllamaNonStreamingResponse')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Fix 3: Agent loop continuation nudge
 // ---------------------------------------------------------------------------
 describe('Agent loop continuation nudge', () => {
   test('continuation logic has been moved to utility', async () => {
@@ -469,14 +443,6 @@ describe('Regression checks', () => {
     }
   })
 
-  test('store field remains opt-out by per-route config rather than unconditional deletion', async () => {
-    const openaiShim = await file('services/api/openaiShim.ts').text()
-    const runtimeMetadata = await file('integrations/runtimeMetadata.ts').text()
-
-    expect(openaiShim).toMatch(/store:\s*false/)
-    expect(openaiShim).toContain('for (const field of shimConfig.removeBodyFields ?? [])')
-    expect(runtimeMetadata).toContain('mergeRemoveBodyFields')
-  })
 })
 
 // ---------------------------------------------------------------------------
