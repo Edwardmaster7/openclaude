@@ -1174,21 +1174,27 @@ export const SettingsSchema = lazySchema(() =>
               ),
           }
         : {}),
-      // Teams/Enterprise opt-IN for channel notifications. Default OFF.
-      // MCP servers that declare the claude/channel capability can push
-      // inbound messages into the conversation; for managed orgs this only
-      // works when explicitly enabled. Which servers can connect at all is
-      // still governed by allowedMcpServers/deniedMcpServers. Not
-      // feature-spread: KAIROS_CHANNELS is external:true, and the spread
-      // wrecks type inference for allowedChannelPlugins (the .passthrough()
-      // catch-all gives {} instead of the array type).
+      // Opt-IN for channel notifications. Default OFF. MCP servers that
+      // declare the claude/channel capability can push inbound messages
+      // into the conversation. Which servers can connect at all is still
+      // governed by allowedMcpServers/deniedMcpServers. For individual
+      // (non-managed) accounts, setting this true in userSettings/
+      // projectSettings/localSettings also bypasses the claude.ai OAuth
+      // requirement (see isChannelsEnabledLocally in channelAllowlist.ts).
+      // Managed (Team/Enterprise) accounts must set this in policySettings
+      // specifically and always still require OAuth. Not feature-spread:
+      // KAIROS_CHANNELS is external:true, and the spread wrecks type
+      // inference for allowedChannelPlugins (the .passthrough() catch-all
+      // gives {} instead of the array type).
       channelsEnabled: z
         .boolean()
         .optional()
         .describe(
-          'Teams/Enterprise opt-in for channel notifications (MCP servers with the ' +
-            'claude/channel capability pushing inbound messages). Default off. ' +
-            'Set true to allow; users then select servers via --channels.',
+          'Opt-in for channel notifications (MCP servers with the claude/channel ' +
+            'capability pushing inbound messages). Default off. Set true to allow; ' +
+            'users then select servers via --channels. For individual accounts this ' +
+            'also skips the claude.ai OAuth requirement. Team/Enterprise accounts ' +
+            'must set this in managed settings and always require OAuth.',
         ),
       // Org-level channel plugin allowlist. When set, REPLACES the
       // Anthropic ledger — admin owns the trust decision. Undefined means
