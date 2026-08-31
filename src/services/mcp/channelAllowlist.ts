@@ -16,8 +16,10 @@
  */
 
 import { z } from 'zod/v4'
+import { getSubscriptionType } from '../../utils/auth.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { parsePluginIdentifier } from '../../utils/plugins/pluginIdentifier.js'
+import { getSettingsForSource } from '../../utils/settings/settings.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/growthbook.js'
 
 export type ChannelAllowlistEntry = {
@@ -72,5 +74,24 @@ export function isChannelAllowlisted(
   if (!marketplace) return false
   return getChannelAllowlist().some(
     e => e.plugin === name && e.marketplace === marketplace,
+  )
+}
+
+/**
+ * Local opt-in for individual (non-managed) users — settings.json
+ * `channelsEnabled: true` in user/project/local scope. Lets OpenClaude
+ * users turn Channels on directly instead of depending on the
+ * Anthropic-only tengu_harbor GrowthBook flag or a claude.ai account.
+ * Managed (Team/Enterprise) accounts are excluded — those must go
+ * through policySettings so org admins keep the trust decision (see
+ * gateChannelServer's policy gate in channelNotification.ts).
+ */
+export function isChannelsEnabledLocally(): boolean {
+  const sub = getSubscriptionType()
+  if (sub === 'team' || sub === 'enterprise') return false
+  return (
+    getSettingsForSource('localSettings')?.channelsEnabled === true ||
+    getSettingsForSource('projectSettings')?.channelsEnabled === true ||
+    getSettingsForSource('userSettings')?.channelsEnabled === true
   )
 }
