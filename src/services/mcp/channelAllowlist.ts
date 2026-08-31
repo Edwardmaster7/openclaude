@@ -46,12 +46,16 @@ export function getChannelAllowlist(): ChannelAllowlistEntry[] {
 }
 
 /**
- * Overall channels on/off. Checked before any per-server gating —
- * when false, --channels is a no-op and no handlers register.
- * Default false; GrowthBook 5-min refresh.
+ * Overall channels on/off. Checked before any per-server gating — when
+ * false, --channels is a no-op and no handlers register. True when either
+ * the user has set channelsEnabled: true locally (isChannelsEnabledLocally)
+ * or the tengu_harbor GrowthBook flag is on. Default false.
  */
 export function isChannelsEnabled(): boolean {
-  return getFeatureValue_CACHED_MAY_BE_STALE('tengu_harbor', false)
+  return (
+    isChannelsEnabledLocally() ||
+    getFeatureValue_CACHED_MAY_BE_STALE('tengu_harbor', false)
+  )
 }
 
 /**

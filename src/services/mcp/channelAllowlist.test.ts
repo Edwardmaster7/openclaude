@@ -6,9 +6,13 @@ const _realSettings = await import(
 const _realAuth = await import(
   `../../utils/auth.js?real=${Date.now()}-${Math.random()}`
 )
+const _realGrowthbook = await import(
+  `../analytics/growthbook.js?real=${Date.now()}-${Math.random()}`
+)
 
 let _mockSettings: Record<string, { channelsEnabled?: boolean } | null> = {}
 let _mockSub: string | null = null
+let _mockTenguHarbor = false
 
 mock.module('../../utils/settings/settings.js', () => ({
   getSettingsForSource: (source: string) => _mockSettings[source] ?? null,
@@ -16,18 +20,24 @@ mock.module('../../utils/settings/settings.js', () => ({
 mock.module('../../utils/auth.js', () => ({
   getSubscriptionType: () => _mockSub,
 }))
+mock.module('../analytics/growthbook.js', () => ({
+  getFeatureValue_CACHED_MAY_BE_STALE: (key: string, fallback: unknown) =>
+    key === 'tengu_harbor' ? _mockTenguHarbor : fallback,
+}))
 
-const { isChannelsEnabledLocally } = await import('./channelAllowlist.js')
+const { isChannelsEnabledLocally, isChannelsEnabled } = await import('./channelAllowlist.js')
 
 beforeEach(() => {
   _mockSettings = {}
   _mockSub = null
+  _mockTenguHarbor = false
 })
 
 afterAll(() => {
   mock.restore()
   mock.module('../../utils/settings/settings.js', () => _realSettings)
   mock.module('../../utils/auth.js', () => _realAuth)
+  mock.module('../analytics/growthbook.js', () => _realGrowthbook)
 })
 
 describe('isChannelsEnabledLocally', () => {
@@ -65,5 +75,21 @@ describe('isChannelsEnabledLocally', () => {
     _mockSub = 'enterprise'
     _mockSettings.userSettings = { channelsEnabled: true }
     expect(isChannelsEnabledLocally()).toBe(false)
+  })
+})
+
+describe('isChannelsEnabled', () => {
+  test('false when neither tengu_harbor nor local settings are on', () => {
+    expect(isChannelsEnabled()).toBe(false)
+  })
+
+  test('true when tengu_harbor is on', () => {
+    _mockTenguHarbor = true
+    expect(isChannelsEnabled()).toBe(true)
+  })
+
+  test('true when local settings toggle is on, independent of tengu_harbor', () => {
+    _mockSettings.userSettings = { channelsEnabled: true }
+    expect(isChannelsEnabled()).toBe(true)
   })
 })
