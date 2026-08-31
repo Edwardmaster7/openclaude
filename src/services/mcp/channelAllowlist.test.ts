@@ -1,16 +1,19 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
-import * as originalSettings from '../../utils/settings/settings.js'
-import * as originalAuth from '../../utils/auth.js'
+import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test'
+
+const _realSettings = await import(
+  `../../utils/settings/settings.js?real=${Date.now()}-${Math.random()}`
+)
+const _realAuth = await import(
+  `../../utils/auth.js?real=${Date.now()}-${Math.random()}`
+)
 
 let _mockSettings: Record<string, { channelsEnabled?: boolean } | null> = {}
 let _mockSub: string | null = null
 
 mock.module('../../utils/settings/settings.js', () => ({
-  ...originalSettings,
   getSettingsForSource: (source: string) => _mockSettings[source] ?? null,
 }))
 mock.module('../../utils/auth.js', () => ({
-  ...originalAuth,
   getSubscriptionType: () => _mockSub,
 }))
 
@@ -21,8 +24,10 @@ beforeEach(() => {
   _mockSub = null
 })
 
-afterEach(() => {
+afterAll(() => {
   mock.restore()
+  mock.module('../../utils/settings/settings.js', () => _realSettings)
+  mock.module('../../utils/auth.js', () => _realAuth)
 })
 
 describe('isChannelsEnabledLocally', () => {
