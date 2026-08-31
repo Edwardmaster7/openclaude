@@ -86,6 +86,7 @@ const featureFlags: Record<string, boolean> = {
   VOICE_MODE: false,              // Push-to-talk STT via claude.ai OAuth endpoint
   PROACTIVE: false,               // Autonomous agent mode (missing proactive/ module)
   KAIROS: false,                  // Persistent assistant/session mode (cloud backend)
+  KAIROS_CHANNELS: true,          // MCP Channels: push external messages (webhook/bot) into a session
   BRIDGE_MODE: false,             // Remote desktop bridge via CCR infrastructure
   DAEMON: false,                  // Background daemon process (stubbed in open build)
   AGENT_TRIGGERS: false,          // Scheduled remote agent triggers
