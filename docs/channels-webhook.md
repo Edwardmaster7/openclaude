@@ -8,8 +8,10 @@ dependency.
 
 ## 1. Turn on Channels for your account
 
-Add to `~/.claude/settings.json` (or `.claude/settings.json` /
-`.claude/settings.local.json` for a project-scoped opt-in):
+Add to `~/.openclaude/settings.json` (this fork's primary user-settings
+path — it falls back to `~/.claude/settings.json` only if `~/.openclaude`
+doesn't exist; or use `.claude/settings.json` / `.claude/settings.local.json`
+for a project-scoped opt-in):
 
 ```json
 {
@@ -22,43 +24,52 @@ individual accounts. (Team/Enterprise accounts: this must be set in your
 org's managed `policySettings`, and OAuth is still required — see
 `docs/superpowers/specs/2026-08-31-local-mcp-channels-design.md`.)
 
-## 2. Build and start the webhook channel server
+## 2. Build and smoke-test the webhook channel server
 
 ```bash
 bun run build
 node bin/openclaude mcp serve-webhook-channel --port 8787 --token <pick-a-secret>
 ```
 
-Keep this running in its own terminal — it's a standalone MCP server
-process. It logs `webhook-channel: listening on http://127.0.0.1:8787/message`
-when ready.
+This is a smoke test only — confirm it logs
+`webhook-channel: listening on http://127.0.0.1:8787/message`, then
+**Ctrl-C it** before continuing to step 3. The real long-running instance
+is launched automatically (as a subprocess of your `openclaude` session)
+once you register it as a stdio MCP server in the next step — running it
+manually *and* registering it would start two processes fighting over the
+same port (the MCP-spawned one fails with `EADDRINUSE`, and the manually
+launched one has no MCP client attached to it).
 
 ## 3. Register it as an MCP server
 
-In your project (or globally), run the normal interactive flow:
+`openclaude mcp add` has no interactive prompt flow — pass the full
+subprocess command directly, with `--` so `mcp add`'s own argument
+parsing doesn't try to consume `--port`/`--token` as its own flags:
 
 ```bash
-openclaude mcp add
+openclaude mcp add webhook -- node /absolute/path/to/repo/bin/openclaude mcp serve-webhook-channel --port 8787 --token <the-same-secret>
 ```
 
-When prompted, point it at:
-
-- **command:** `node`
-- **args:** `bin/openclaude mcp serve-webhook-channel --port 8787 --token <the-same-secret>`
-
-(Or add directly to `.mcp.json` — see `openclaude mcp add --help` for the
-non-interactive form.)
+This registers `webhook` as a stdio MCP server whose command is
+`node bin/openclaude mcp serve-webhook-channel --port 8787 --token <the-same-secret>`
+— `openclaude` will spawn this itself in step 4, which is what actually
+starts the long-running instance.
 
 ## 4. Start a session with the channel enabled
 
 ```bash
-openclaude --channels server:<the-name-you-gave-it> --dangerously-load-development-channels
+openclaude --dangerously-load-development-channels server:webhook
 ```
 
-`--dangerously-load-development-channels` is required because this
-server isn't on the built-in approved-plugins ledger — that flag is the
-documented local-dev bypass for exactly this case, and shows a
-confirmation dialog at startup.
+Pass the server name (`server:<the-name-you-gave-it>` — matching whatever
+name you registered in step 3) directly as a value to
+`--dangerously-load-development-channels`; that's what actually registers
+it as a dev-trusted channel for this session, since this server isn't on
+the built-in approved-plugins ledger. (There's no separate `--channels`
+flag needed here — passing the name to
+`--dangerously-load-development-channels` both allows and enables it.)
+The flag requires at least one value, so it can't be passed bare, and
+shows a confirmation dialog at startup.
 
 ## 5. Send a message in
 

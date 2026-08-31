@@ -183,7 +183,8 @@ Mirrors the existing `mcp serve` subcommand exactly:
 
 No new CLI surface for *registering* the server with a running session —
 users add it the same way they add any third-party MCP server, via the
-existing `openclaude mcp add` interactive flow, pointing the command at
+existing `openclaude mcp add <name> <command> [args...]` non-interactive
+form, pointing the command at
 `openclaude mcp serve-webhook-channel --port 8787 --token <secret>`.
 
 ### 5. Docs
