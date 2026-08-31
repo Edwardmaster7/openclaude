@@ -93,6 +93,15 @@ export function isChannelAllowlisted(
 export function isChannelsEnabledLocally(): boolean {
   const sub = getSubscriptionType()
   if (sub === 'team' || sub === 'enterprise') return false
+  // Explicit managed veto: an org can be centrally managed (policySettings
+  // present) without team/enterprise subscription typing — e.g. Bedrock,
+  // Vertex, Foundry, or API-key deployments, where getSubscriptionType()
+  // returns null. If org policy explicitly does not enable channels, that
+  // must block the local bypass too, regardless of how this account
+  // authenticates.
+  if (getSettingsForSource('policySettings')?.channelsEnabled === false) {
+    return false
+  }
   return (
     getSettingsForSource('localSettings')?.channelsEnabled === true ||
     getSettingsForSource('projectSettings')?.channelsEnabled === true ||
