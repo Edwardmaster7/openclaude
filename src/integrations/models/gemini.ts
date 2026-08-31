@@ -13,7 +13,7 @@ const geminiCapabilities = {
 
 const geminiReasoning: ReasoningControlMetadata = {
   mode: 'levels',
-  levels: ['low', 'medium', 'high'],
+  levels: ['low', 'medium', 'high', 'xhigh'],
   wireFormat: 'reasoning_effort',
 }
 

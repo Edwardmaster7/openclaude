@@ -13,6 +13,7 @@ import type { QuerySource } from '../../constants/querySource.js'
 import { getSystemContext, getUserContext } from '../../context.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import { query } from '../../query.js'
+import type { Terminal } from '../../query/transitions.js'
 import { getGlobalConfig } from '../../utils/config.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
 import { getDumpPromptsPath } from '../../services/api/dumpPrompts.js'
@@ -255,6 +256,7 @@ export async function* runAgent({
   override,
   model,
   maxTurns,
+  maxSteps,
   preserveToolUseResults,
   availableTools,
   allowedTools,
@@ -262,6 +264,7 @@ export async function* runAgent({
   contentReplacementState,
   useExactTools,
   worktreePath,
+  cwd,
   description,
   transcriptSubdir,
   onQueryProgress,
@@ -287,6 +290,7 @@ export async function* runAgent({
   }
   model?: string
   maxTurns?: number
+  maxSteps?: number
   /** Preserve toolUseResult on messages for subagents with viewable transcripts */
   preserveToolUseResults?: boolean
   /** Precomputed tool pool for the worker agent. Computed by the caller
@@ -315,6 +319,10 @@ export async function* runAgent({
   /** Worktree path if the agent was spawned with isolation: "worktree".
    * Persisted to metadata so resume can restore the correct cwd. */
   worktreePath?: string
+  /** Explicit cwd override for the agent's working directory. Persisted for
+   * resume even when a worktree exists, so multi-repo parent sessions can
+   * fall back to the child-repo path after worktree cleanup. */
+  cwd?: string
   /** Original task description from AgentTool input. Persisted to metadata
    * so a resumed agent's notification can show the original description. */
   description?: string
@@ -772,23 +780,49 @@ export async function* runAgent({
     })
   }
 
-  // Record initial messages before the query loop starts, plus the agentType
-  // so resume can route correctly when subagent_type is omitted. Both writes
-  // are fire-and-forget — persistence failure shouldn't block the agent.
-  void recordSidechainTranscript(initialMessages, agentId).catch(_err =>
-    logForDebugging(`Failed to record sidechain transcript: ${_err}`),
-  )
-  void writeAgentMetadata(agentId, {
-    agentType: agentDefinition.agentType,
-    ...(worktreePath && { worktreePath }),
-    ...(description && { description }),
-  }).catch(_err => logForDebugging(`Failed to write agent metadata: ${_err}`))
+  // Record agentType and identity metadata so resume can route correctly.
+  // This must be awaited before writing the initial transcript so that any
+  // resume attempt reading the transcript is guaranteed to find the metadata.
+  let metadataWritten = false
+  try {
+    await writeAgentMetadata(agentId, {
+      agentType: agentDefinition.agentType,
+      source: agentDefinition.source,
+      ...(worktreePath && { worktreePath }),
+      // Keep explicit cwd even when a worktree exists so resume can fall back
+      // to the child repo if the worktree is later removed.
+      ...(cwd && { cwd }),
+      ...(description && { description }),
+    })
+    metadataWritten = true
+  } catch (_err) {
+    logForDebugging(`Failed to write agent metadata: ${_err}`)
+  }
 
+  // Record initial messages before the query loop starts.
+  // Fire-and-forget — persistence failure shouldn't block the agent.
+  // Only write the transcript if identity metadata was successfully persisted,
+  // ensuring we never leave a transcript that would resume without its restricted identity.
+  if (metadataWritten) {
+    void recordSidechainTranscript(initialMessages, agentId).catch(_err =>
+      logForDebugging(`Failed to record sidechain transcript: ${_err}`),
+    )
+  } else {
+    logForDebugging('Skipping initial transcript write because identity metadata persistence failed')
+  }
   // Track the last recorded message UUID for parent chain continuity
   let lastRecordedUuid: UUID | null = initialMessages.at(-1)?.uuid ?? null
 
   try {
-    for await (const message of query({
+    let queryTerminal: Terminal | undefined
+    const configuredMaxSteps =
+      Number.isSafeInteger(maxSteps) && maxSteps! > 0
+        ? maxSteps
+        : Number.isSafeInteger(agentDefinition.maxSteps) &&
+            agentDefinition.maxSteps! > 0
+          ? agentDefinition.maxSteps
+          : undefined
+    const queryIterator = query({
       messages: initialMessages,
       systemPrompt: agentSystemPrompt,
       userContext: resolvedUserContext,
@@ -797,55 +831,77 @@ export async function* runAgent({
       toolUseContext: agentToolUseContext,
       querySource,
       maxTurns: maxTurns ?? (agentDefinition.agentType === 'fork' ? getGlobalConfig().forkMaxTurns ?? agentDefinition.maxTurns : agentDefinition.maxTurns),
-    })) {
-      onQueryProgress?.()
-      // Forward subagent API request starts to parent's metrics display
-      // so TTFT/OTPS update during subagent execution.
-      if (
-        message.type === 'stream_event' &&
-        message.event.type === 'message_start' &&
-        message.ttftMs != null
-      ) {
-        toolUseContext.pushApiMetricsEntry?.(message.ttftMs)
-        continue
-      }
+      agentStepLimit:
+        configuredMaxSteps !== undefined
+          ? {
+              maxSteps: configuredMaxSteps,
+              agentType: agentDefinition.agentType,
+            }
+          : undefined,
+    })[Symbol.asyncIterator]()
 
-      // Yield attachment messages (e.g., structured_output) without recording them
-      if (message.type === 'attachment') {
-        // Handle max turns reached signal from query.ts
-        if (message.attachment.type === 'max_turns_reached') {
-          logForDebugging(
-            `[Agent
-: $
-{
-  agentDefinition.agentType
-}
-] Reached max turns limit ($
-{
-  message.attachment.maxTurns
-}
-)`,
-          )
+    try {
+      while (true) {
+        const next = await queryIterator.next()
+        if (next.done) {
+          queryTerminal = next.value
           break
         }
-        yield message
-        continue
-      }
 
-      if (isRecordableMessage(message)) {
-        // Record only the new message with correct parent (O(1) per message)
-        await recordSidechainTranscript(
-          [message],
-          agentId,
-          lastRecordedUuid,
-        ).catch(err =>
-          logForDebugging(`Failed to record sidechain transcript: ${err}`),
-        )
-        if (message.type !== 'progress') {
-          lastRecordedUuid = message.uuid
+        const message = next.value
+        onQueryProgress?.()
+        // Forward subagent API request starts to parent's metrics display
+        // so TTFT/OTPS update during subagent execution.
+        if (
+          message.type === 'stream_event' &&
+          message.event.type === 'message_start' &&
+          message.ttftMs != null
+        ) {
+          toolUseContext.pushApiMetricsEntry?.(message.ttftMs)
+          continue
         }
-        yield message
+
+        // Yield attachment messages (e.g., structured_output) without recording them
+        if (message.type === 'attachment') {
+          // Handle max turns reached signal from query.ts
+          if (message.attachment.type === 'max_turns_reached') {
+            logForDebugging(
+              `[Agent: ${agentDefinition.agentType}] Reached max turns limit (${message.attachment.maxTurns})`,
+            )
+            break
+          }
+          yield message
+          continue
+        }
+
+        if (isRecordableMessage(message)) {
+          // Record only the new message with correct parent (O(1) per message)
+          // Only write if identity metadata was successfully persisted.
+          if (metadataWritten) {
+            await recordSidechainTranscript(
+              [message],
+              agentId,
+              lastRecordedUuid,
+            ).catch(err =>
+              logForDebugging(`Failed to record sidechain transcript: ${err}`),
+            )
+          }
+          if (message.type !== 'progress') {
+            lastRecordedUuid = message.uuid
+          }
+          yield message
+        }
       }
+    } finally {
+      if (queryTerminal === undefined) {
+        await queryIterator.return?.(undefined as never)
+      }
+    }
+
+    if (queryTerminal?.reason === 'agent_step_limit') {
+      logForDebugging(
+        `[Agent: ${agentDefinition.agentType}] Stopped after reaching maxSteps (${queryTerminal.stepsUsed}/${queryTerminal.maxSteps})`,
+      )
     }
 
     if (agentAbortController.signal.aborted) {

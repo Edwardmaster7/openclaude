@@ -46,6 +46,9 @@ import {
 } from '../../tasks/LocalAgentTask/LocalAgentTask.js'
 import type { CustomAgentDefinition } from '../../tools/AgentTool/loadAgentsDir.js'
 import { runAgent } from '../../tools/AgentTool/runAgent.js'
+import {
+  registerInterruptionController,
+} from '../interruptionTrace.js'
 import { awaitClassifierAutoApproval } from '../../tools/BashTool/bashPermissions.js'
 import { BASH_TOOL_NAME } from '../../tools/BashTool/toolName.js'
 import { SEND_MESSAGE_TOOL_NAME } from '../../tools/SendMessageTool/constants.js'
@@ -108,6 +111,7 @@ import {
   sendPermissionRequestViaMailbox,
 } from './permissionSync.js'
 import { TEAMMATE_SYSTEM_PROMPT_ADDENDUM } from './teammatePromptAddendum.js'
+import { createInProcessPermissionAbortCompleter } from './inProcessPermissionAbort.js'
 
 type SetAppStateFn = (updater: (prev: AppState) => AppState) => void
 
@@ -125,7 +129,7 @@ const PERMISSION_POLL_INTERVAL_MS = 500
  * sends a permission request to the leader's inbox, waits for the response
  * in the teammate's own mailbox.
  */
-function createInProcessCanUseTool(
+export function createInProcessCanUseTool(
   identity: TeammateIdentity,
   abortController: AbortController,
   onPermissionWaitMs?: (waitMs: number) => void,
@@ -201,7 +205,6 @@ function createInProcessCanUseTool(
     // Standard path: use ToolUseConfirm dialog with worker badge
     if (setToolUseConfirmQueue) {
       return new Promise<PermissionDecision>(resolve => {
-        let decisionMade = false
         const permissionStartMs = Date.now()
 
         // Report permission wait time to the caller so it can be
@@ -210,19 +213,20 @@ function createInProcessCanUseTool(
           onPermissionWaitMs?.(Date.now() - permissionStartMs)
         }
 
-        const onAbortListener = () => {
-          if (decisionMade) return
-          decisionMade = true
-          reportPermissionWait()
-          resolve({ behavior: 'ask', message: SUBAGENT_REJECT_MESSAGE })
-          setToolUseConfirmQueue(queue =>
-            queue.filter(item => item.toolUseID !== toolUseID),
-          )
-        }
+        const completion = createInProcessPermissionAbortCompleter(
+          abortController.signal,
+          () => {
+            reportPermissionWait()
+            resolve({ behavior: 'ask', message: SUBAGENT_REJECT_MESSAGE })
+            setToolUseConfirmQueue(queue =>
+              queue.filter(item => item.toolUseID !== toolUseID),
+            )
+          },
+        )
 
-        abortController.signal.addEventListener('abort', onAbortListener, {
-          once: true,
-        })
+        if (completion.isSettled()) {
+          return
+        }
 
         setToolUseConfirmQueue(queue => [
           ...queue,
@@ -241,15 +245,8 @@ function createInProcessCanUseTool(
             onUserInteraction() {
               // No-op for teammates (no classifier auto-approval)
             },
-            onAbort() {
-              if (decisionMade) return
-              decisionMade = true
-              abortController.signal.removeEventListener(
-                'abort',
-                onAbortListener,
-              )
-              reportPermissionWait()
-              resolve({ behavior: 'ask', message: SUBAGENT_REJECT_MESSAGE })
+            onAbort(source, causalEventId) {
+              completion.completeAbort(source, causalEventId)
             },
             async onAllow(
               updatedInput: Record<string, unknown>,
@@ -257,12 +254,7 @@ function createInProcessCanUseTool(
               feedback?: string,
               contentBlocks?: ContentBlockParam[],
             ) {
-              if (decisionMade) return
-              decisionMade = true
-              abortController.signal.removeEventListener(
-                'abort',
-                onAbortListener,
-              )
+              if (!completion.claim()) return
               reportPermissionWait()
               persistPermissionUpdates(permissionUpdates)
               // Write back permission updates to the leader's shared context
@@ -294,12 +286,7 @@ function createInProcessCanUseTool(
               })
             },
             onReject(feedback?: string, contentBlocks?: ContentBlockParam[]) {
-              if (decisionMade) return
-              decisionMade = true
-              abortController.signal.removeEventListener(
-                'abort',
-                onAbortListener,
-              )
+              if (!completion.claim()) return
               reportPermissionWait()
               const message = feedback
                 ? `${SUBAGENT_REJECT_MESSAGE_WITH_REASON_PREFIX}${feedback}`
@@ -307,7 +294,7 @@ function createInProcessCanUseTool(
               resolve({ behavior: 'ask', message, contentBlocks })
             },
             async recheckPermission() {
-              if (decisionMade) return
+              if (completion.isSettled()) return
               const freshResult = await hasPermissionsToUseTool(
                 tool,
                 input,
@@ -315,12 +302,10 @@ function createInProcessCanUseTool(
                 assistantMessage,
                 toolUseID,
               )
-              if (freshResult.behavior === 'allow') {
-                decisionMade = true
-                abortController.signal.removeEventListener(
-                  'abort',
-                  onAbortListener,
-                )
+              if (
+                freshResult.behavior === 'allow' &&
+                completion.claim()
+              ) {
                 reportPermissionWait()
                 setToolUseConfirmQueue(queue =>
                   queue.filter(item => item.toolUseID !== toolUseID),
@@ -350,6 +335,26 @@ function createInProcessCanUseTool(
         workerColor: identity.color,
         teamName: identity.teamName,
       })
+      let pollInterval: ReturnType<typeof setInterval> | undefined
+
+      function cleanup() {
+        if (pollInterval !== undefined) {
+          clearInterval(pollInterval)
+        }
+        unregisterPermissionCallback(request.id)
+      }
+
+      const completion = createInProcessPermissionAbortCompleter(
+        abortController.signal,
+        () => {
+          cleanup()
+          resolve({ behavior: 'ask', message: SUBAGENT_REJECT_MESSAGE })
+        },
+      )
+
+      if (completion.isSettled()) {
+        return
+      }
 
       // Register callback to be invoked when the leader responds
       registerPermissionCallback({
@@ -361,6 +366,7 @@ function createInProcessCanUseTool(
           _feedback?: string,
           contentBlocks?: ContentBlockParam[],
         ) {
+          if (!completion.claim()) return
           cleanup()
           persistPermissionUpdates(permissionUpdates)
           const finalInput =
@@ -375,6 +381,7 @@ function createInProcessCanUseTool(
           })
         },
         onReject(feedback?: string, contentBlocks?: ContentBlockParam[]) {
+          if (!completion.claim()) return
           cleanup()
           const message = feedback
             ? `${SUBAGENT_REJECT_MESSAGE_WITH_REASON_PREFIX}${feedback}`
@@ -387,11 +394,10 @@ function createInProcessCanUseTool(
       void sendPermissionRequestViaMailbox(request)
 
       // Poll teammate's mailbox for the response
-      const pollInterval = setInterval(
-        async (abortController, cleanup, resolve, identity, request) => {
+      pollInterval = setInterval(
+        async (completion, identity, request) => {
           if (abortController.signal.aborted) {
-            cleanup()
-            resolve({ behavior: 'ask', message: SUBAGENT_REJECT_MESSAGE })
+            completion.completeSignalAbort()
             return
           }
 
@@ -429,27 +435,10 @@ function createInProcessCanUseTool(
           }
         },
         PERMISSION_POLL_INTERVAL_MS,
-        abortController,
-        cleanup,
-        resolve,
+        completion,
         identity,
         request,
       )
-
-      const onAbortListener = () => {
-        cleanup()
-        resolve({ behavior: 'ask', message: SUBAGENT_REJECT_MESSAGE })
-      }
-
-      abortController.signal.addEventListener('abort', onAbortListener, {
-        once: true,
-      })
-
-      function cleanup() {
-        clearInterval(pollInterval)
-        unregisterPermissionCallback(request.id)
-        abortController.signal.removeEventListener('abort', onAbortListener)
-      }
     })
   }
 }
@@ -1090,6 +1079,12 @@ export async function runInProcessTeammate(
       // This allows Escape to stop current work without killing the whole teammate.
       // The lifecycle abortController still kills the whole teammate if needed.
       const currentWorkAbortController = createAbortController()
+      registerInterruptionController(currentWorkAbortController, {
+        subsystem: 'in_process_teammate',
+        controllerRole: 'subagent-turn',
+        subagentId: identity.agentId,
+        querySource: 'agent:custom',
+      })
 
       // Store the work controller in task state so UI can abort it
       updateTaskState(
