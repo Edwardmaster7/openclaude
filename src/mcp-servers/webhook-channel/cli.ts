@@ -67,11 +67,22 @@ export async function runWebhookChannelServer(argv: string[]): Promise<void> {
     port,
     token,
     onMessage: msg => {
-      void server.notification({
-        method: 'notifications/claude/channel',
-        params: { content: msg.content, meta: msg.meta },
-      } as Parameters<typeof server.notification>[0])
+      server
+        .notification({
+          method: 'notifications/claude/channel',
+          params: { content: msg.content, meta: msg.meta },
+        } as Parameters<typeof server.notification>[0])
+        .catch(err => {
+          process.stderr.write(
+            `webhook-channel: failed to deliver channel notification: ${err.message}\n`,
+          )
+        })
     },
+  })
+  httpServer.on('error', err => {
+    process.stderr.write(`webhook-channel: failed to start listener: ${err.message}\n`)
+    // eslint-disable-next-line custom-rules/no-process-exit
+    process.exit(1)
   })
   httpServer.listen(port, '127.0.0.1', () => {
     process.stderr.write(
