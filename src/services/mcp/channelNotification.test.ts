@@ -39,12 +39,14 @@ const _realAuth = await import(
 // reads these on every call; resetting between tests keeps the
 // scenarios independent.
 let _channelsEnabled = true
+let _channelsEnabledLocally = false
 let _allowlist: ReadonlyArray<{ marketplace: string; plugin: string }> = []
 let _mockOAuthTokens: { accessToken?: string } = { accessToken: 'fake-ci-token' }
 let _mockSubscriptionType: string | null = null
 
 mock.module('./channelAllowlist.js', () => ({
   isChannelsEnabled: () => _channelsEnabled,
+  isChannelsEnabledLocally: () => _channelsEnabledLocally,
   getChannelAllowlist: () => _allowlist,
   isChannelAllowlisted: (pluginSource: string | undefined) => {
     if (!pluginSource) return false
@@ -81,6 +83,7 @@ function cap(extra: Record<string, unknown> = {}): ServerCapabilities {
 
 beforeEach(() => {
   _channelsEnabled = true
+  _channelsEnabledLocally = false
   _allowlist = []
   _mockOAuthTokens = { accessToken: 'fake-ci-token' }
   _mockSubscriptionType = null
@@ -147,6 +150,25 @@ describe('gateChannelServer', () => {
   // 3. OAuth gate — no access token blocks.
   test('skips when no OAuth access token is present', () => {
     _mockOAuthTokens = {} // no accessToken
+    const result = gateChannelServer('slack', cap(), undefined)
+    if (result.action !== 'skip') {
+      throw new Error(`expected skip, got ${result.action}`)
+    }
+    expect(result.kind).toBe('auth')
+  })
+
+  test('OAuth gate is skipped when channels are enabled locally', () => {
+    _channelsEnabledLocally = true
+    _mockOAuthTokens = {} // no accessToken
+    setAllowedChannels([{ kind: 'server', name: 'slack', dev: true }])
+    const result = gateChannelServer('slack', cap(), undefined)
+    expect(result.action).toBe('register')
+  })
+
+  test('OAuth gate still applies when channels are NOT enabled locally', () => {
+    _channelsEnabledLocally = false
+    _mockOAuthTokens = {} // no accessToken
+    setAllowedChannels([{ kind: 'server', name: 'slack', dev: true }])
     const result = gateChannelServer('slack', cap(), undefined)
     if (result.action !== 'skip') {
       throw new Error(`expected skip, got ${result.action}`)
