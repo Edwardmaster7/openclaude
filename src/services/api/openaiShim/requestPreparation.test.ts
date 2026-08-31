@@ -140,6 +140,7 @@ test('flags Gemini requests so message conversion drops inline images', async ()
     params: {
       model: 'gemini-3-pro',
       messages: [{ role: 'user', content: 'hello' }],
+      max_tokens: 64,
     },
     dependencies: {
       ...dependencies,
@@ -167,6 +168,7 @@ test('clamps xhigh/max reasoning effort to high for Gemini requests', async () =
     params: {
       model: 'gemini-3-pro?reasoning=xhigh',
       messages: [{ role: 'user', content: 'hello' }],
+      max_tokens: 64,
     },
     dependencies: {
       ...dependencies,

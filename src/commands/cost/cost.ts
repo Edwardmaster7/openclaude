@@ -41,7 +41,7 @@ export const call: LocalCommandCall = async (args, context) => {
   }
 
   if (isHeavy && context?.setMessages) {
-    context.setMessages((prev) => prev.filter((m) => m.uuid !== LOADING_MSG_UUID))
+    context.setMessages((prev) => prev.filter((m) => (m.uuid as string) !== LOADING_MSG_UUID))
   }
 
   return { type: 'text', value: resultValue }
