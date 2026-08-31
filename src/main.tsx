@@ -3768,6 +3768,22 @@ async function run(): Promise<CommanderCommand> {
     });
   });
 
+  mcp.command('serve-webhook-channel').description('Start the bundled local webhook channel MCP server (requires channelsEnabled: true in settings.json and --channels at launch — see docs/channels-webhook.md)').option('--port <n>', 'HTTP listener port (default 8787)').option('--token <secret>', 'Shared secret callers must send as `Authorization: Bearer <token>` (required)').action(async ({
+    port,
+    token
+  }: {
+    port?: string;
+    token?: string;
+  }) => {
+    const {
+      mcpServeWebhookChannelHandler
+    } = await import('./cli/handlers/mcp.js');
+    await mcpServeWebhookChannelHandler({
+      port,
+      token
+    });
+  });
+
   // Register the mcp add subcommand (extracted for testability)
   registerMcpAddCommand(mcp);
   registerMcpDoctorCommand(mcp);
