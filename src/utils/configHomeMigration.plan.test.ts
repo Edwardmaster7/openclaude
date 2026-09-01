@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { planConfigHomeMigration } from './configHomeMigration.js'
@@ -11,11 +17,6 @@ function withTempHome(fn: (home: string) => void): void {
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
-}
-
-function writeFileAt(path: string, contents: string): void {
-  mkdirSync(join(path, '..'), { recursive: true })
-  writeFileSync(path, contents)
 }
 
 describe('planConfigHomeMigration', () => {
@@ -86,6 +87,88 @@ describe('planConfigHomeMigration', () => {
 
       const plan = planConfigHomeMigration({ homeDir: home })
       expect(plan.conflictingSettingsKeys).toEqual(['theme'])
+    })
+  })
+
+  test('plans CLAUDE.md and keybindings.json when absent at the destination', () => {
+    withTempHome(home => {
+      mkdirSync(join(home, '.openclaude'), { recursive: true })
+      writeFileSync(join(home, '.openclaude', 'CLAUDE.md'), '# memory\n')
+      writeFileSync(
+        join(home, '.openclaude', 'keybindings.json'),
+        JSON.stringify({ bindings: [] }),
+      )
+
+      const plan = planConfigHomeMigration({ homeDir: home })
+
+      expect(plan.surfaces.find(s => s.name === 'CLAUDE.md')).toEqual({
+        name: 'CLAUDE.md',
+        fileCount: 1,
+        skippedCount: 0,
+      })
+      expect(plan.surfaces.find(s => s.name === 'keybindings.json')).toEqual({
+        name: 'keybindings.json',
+        fileCount: 1,
+        skippedCount: 0,
+      })
+      expect(plan.totalFilesToCopy).toBe(2)
+    })
+  })
+
+  test('marks CLAUDE.md and keybindings.json skipped when already at the destination', () => {
+    withTempHome(home => {
+      mkdirSync(join(home, '.openclaude'), { recursive: true })
+      mkdirSync(join(home, '.claude'), { recursive: true })
+      writeFileSync(join(home, '.openclaude', 'CLAUDE.md'), '# openclaude\n')
+      writeFileSync(join(home, '.claude', 'CLAUDE.md'), '# claude\n')
+      writeFileSync(join(home, '.openclaude', 'keybindings.json'), '{}')
+      writeFileSync(join(home, '.claude', 'keybindings.json'), '{}')
+
+      const plan = planConfigHomeMigration({ homeDir: home })
+
+      expect(plan.surfaces.find(s => s.name === 'CLAUDE.md')).toEqual({
+        name: 'CLAUDE.md',
+        fileCount: 0,
+        skippedCount: 1,
+      })
+      expect(plan.surfaces.find(s => s.name === 'keybindings.json')).toEqual({
+        name: 'keybindings.json',
+        fileCount: 0,
+        skippedCount: 1,
+      })
+      expect(plan.totalFilesToCopy).toBe(0)
+    })
+  })
+
+  test('includes the rules and teams directory surfaces', () => {
+    withTempHome(home => {
+      mkdirSync(join(home, '.openclaude', 'rules'), { recursive: true })
+      mkdirSync(join(home, '.openclaude', 'teams'), { recursive: true })
+      writeFileSync(join(home, '.openclaude', 'rules', 'a.md'), 'rule\n')
+      writeFileSync(join(home, '.openclaude', 'teams', 'b.json'), '{}')
+
+      const plan = planConfigHomeMigration({ homeDir: home })
+
+      expect(plan.surfaces.find(s => s.name === 'rules')?.fileCount).toBe(1)
+      expect(plan.surfaces.find(s => s.name === 'teams')?.fileCount).toBe(1)
+    })
+  })
+
+  test('skips a symlinked directory instead of recursing into it', () => {
+    withTempHome(home => {
+      const outside = join(home, 'outside')
+      mkdirSync(outside, { recursive: true })
+      writeFileSync(join(outside, 'vault-note.md'), 'huge\n')
+
+      const skills = join(home, '.openclaude', 'skills')
+      mkdirSync(skills, { recursive: true })
+      writeFileSync(join(skills, 'real.md'), 'real\n')
+      symlinkSync(outside, join(skills, 'linked'), 'dir')
+
+      const plan = planConfigHomeMigration({ homeDir: home })
+
+      // Only the real file counts; the symlinked tree is not followed.
+      expect(plan.surfaces.find(s => s.name === 'skills')?.fileCount).toBe(1)
     })
   })
 

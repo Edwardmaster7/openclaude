@@ -121,6 +121,11 @@ export function ConfigHomeMenu({
   const [migrationErrors, setMigrationErrors] = React.useState<
     MigrationResult['errors'] | null
   >(null);
+  const [progress, setProgress] = React.useState<{
+    surface: string;
+    done: number;
+    total: number;
+  } | null>(null);
 
   const envLocked = active.reason === 'env';
 
@@ -137,6 +142,7 @@ export function ConfigHomeMenu({
         <Select
           options={[{ label: 'Back', value: 'back' }]}
           onChange={onCancel}
+          onCancel={onCancel}
         />
       </Box>
     );
@@ -161,6 +167,9 @@ export function ConfigHomeMenu({
           onChange={() => {
             onComplete(pendingMode, true);
           }}
+          // The copy already happened and the mode is committed — Esc here
+          // means "Continue", not "back out of the submenu".
+          onCancel={() => onComplete(pendingMode, true)}
         />
       </Box>
     );
@@ -186,6 +195,10 @@ export function ConfigHomeMenu({
             at the destination and will be kept; a backup is written first.
           </Text>
         ) : null}
+        <Text dimColor>
+          Sign-in credentials are not copied — you may need to sign in again
+          after switching.
+        </Text>
         <Select
           options={[
             { label: 'Copy now and switch', value: 'migrate' },
@@ -204,7 +217,9 @@ export function ConfigHomeMenu({
             setMigrating(true);
             // Select's onChange returns void; keep the await off the handler
             // signature so this is not a misused promise.
-            void runConfigHomeMigration(plan).then(result => {
+            void runConfigHomeMigration(plan, (surface, done, total) => {
+              setProgress({ surface, done, total });
+            }).then(result => {
               if (result.errors.length > 0) {
                 setMigrating(false);
                 setMigrationErrors(result.errors);
@@ -213,13 +228,20 @@ export function ConfigHomeMenu({
               onComplete(pendingMode, true);
             });
           }}
+          onCancel={onCancel}
         />
       </Box>
     );
   }
 
   if (migrating) {
-    return <Text>Copying…</Text>;
+    return (
+      <Text>
+        {progress
+          ? `Copying ${progress.surface}… (${progress.done}/${progress.total})`
+          : 'Copying…'}
+      </Text>
+    );
   }
 
   return (
@@ -236,17 +258,28 @@ export function ConfigHomeMenu({
       <Select
         options={[
           { label: '~/.claude (shared with Claude Code)', value: 'claude' },
-          { label: '~/.openclaude', value: 'openclaude' }
+          { label: '~/.openclaude', value: 'openclaude' },
+          { label: 'Back', value: 'back' }
         ]}
         onChange={mode => {
-          const next = mode as ConfigHomeMode;
-          if (next === 'claude' && openClaudeCounts.sessions > 0) {
-            setPendingMode(next);
-            setPlan(planConfigHomeMigration());
+          if (mode === 'back') {
+            onCancel();
             return;
+          }
+          const next = mode as ConfigHomeMode;
+          if (next === 'claude') {
+            // Gate on what would actually be copied, not on session count:
+            // skills/agents/settings-only installs must be offered the copy too.
+            const migrationPlan = planConfigHomeMigration();
+            if (migrationPlan.totalFilesToCopy > 0) {
+              setPendingMode(next);
+              setPlan(migrationPlan);
+              return;
+            }
           }
           onComplete(next, false);
         }}
+        onCancel={onCancel}
       />
       <Text dimColor>Restart OpenClaude to apply.</Text>
     </Box>

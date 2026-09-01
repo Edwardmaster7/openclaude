@@ -2005,6 +2005,12 @@ export function Config({
         setShowSubmenu(null);
         setTabsHidden(false);
       }} />
+          <Text dimColor>
+            <Byline>
+              <KeyboardShortcutHint shortcut="Enter" action="confirm" />
+              <ConfigurableShortcutHint action="confirm:no" context="Settings" fallback="Esc" description="cancel" />
+            </Byline>
+          </Text>
         </> : showSubmenu === 'EnableAutoUpdates' ? <Dialog title="Enable Auto-Updates" onCancel={() => {
       setShowSubmenu(null);
       setTabsHidden(false);

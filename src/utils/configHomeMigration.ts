@@ -2,6 +2,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { getFsImplementation } from './fsOperations.js'
 import { writeFileSyncAndFlush_DEPRECATED } from './file.js'
+import { lock } from './lockfile.js'
 import { CLAUDE_CONFIG_DIRECTORIES } from './markdownConfigLoader.js'
 
 export type MigrationSurface = {
@@ -30,7 +31,15 @@ const EXTRA_DIRECTORY_SURFACES = [
   'file-history',
   'sessions',
   'plugins',
+  'rules',
+  'teams',
 ] as const
+
+/**
+ * Top-level files (not directories) that live directly under the config home
+ * and follow the same copy-if-absent convention as the directory surfaces.
+ */
+const SINGLE_FILE_SURFACES = ['CLAUDE.md', 'keybindings.json'] as const
 
 function listFilesRecursive(dir: string): string[] {
   const fs = getFsImplementation()
@@ -44,7 +53,14 @@ function listFilesRecursive(dir: string): string[] {
   for (const entry of entries) {
     const full = join(dir, entry)
     try {
-      if (fs.statSync(full).isDirectory()) {
+      // lstat, not stat: a symlinked directory (e.g. an Obsidian vault linked
+      // into ~/.openclaude) must not be recursed into or copied — following it
+      // would pull in an unbounded tree, or loop forever on a symlink cycle.
+      const stats = fs.lstatSync(full)
+      if (stats.isSymbolicLink()) {
+        continue
+      }
+      if (stats.isDirectory()) {
         out.push(...listFilesRecursive(full))
       } else {
         out.push(full)
@@ -116,6 +132,18 @@ export function planConfigHomeMigration(options?: {
     skippedCount: 0,
   })
 
+  for (const name of SINGLE_FILE_SURFACES) {
+    const sourceFile = join(sourceDir, name)
+    const destFile = join(destDir, name)
+    const sourceExists = fs.existsSync(sourceFile)
+    const destExists = fs.existsSync(destFile)
+    surfaces.push({
+      name,
+      fileCount: sourceExists && !destExists ? 1 : 0,
+      skippedCount: sourceExists && destExists ? 1 : 0,
+    })
+  }
+
   // Session UUIDs present on both sides, reported so the UI can say what
   // will be left alone. Derived from the projects surface.
   const collidingSessionIds: string[] = []
@@ -182,11 +210,11 @@ function copyFileIfAbsent(
   }
 }
 
-function mergeHistory(
+async function mergeHistory(
   sourceDir: string,
   destDir: string,
   result: MigrationResult,
-): void {
+): Promise<void> {
   const fs = getFsImplementation()
   const sourceFile = join(sourceDir, 'history.jsonl')
   const destFile = join(destDir, 'history.jsonl')
@@ -197,28 +225,59 @@ function mergeHistory(
     copyFileIfAbsent(sourceFile, destFile, result)
     return
   }
-  try {
-    const readLines = (path: string): string[] =>
-      fs
-        .readFileSync(path, { encoding: 'utf8' })
-        .split('\n')
-        .filter(line => line.length > 0)
 
+  const readLines = (path: string): string[] =>
+    fs
+      .readFileSync(path, { encoding: 'utf8' })
+      .split('\n')
+      .filter(line => line.length > 0)
+
+  const timestampOf = (line: string): number => {
+    try {
+      const parsed: unknown = JSON.parse(line)
+      const timestamp = (parsed as { timestamp?: unknown } | null)?.timestamp
+      return typeof timestamp === 'number' ? timestamp : 0
+    } catch {
+      return 0
+    }
+  }
+
+  let release: (() => Promise<void>) | undefined
+  try {
     const destLines = readLines(destFile)
     // De-duplicate by exact line content: history entries are self-contained
     // JSON lines, so an identical line is the same event replayed rather than
     // two distinct events.
     const seen = new Set(destLines)
     const added = readLines(sourceFile).filter(line => !seen.has(line))
-    if (added.length > 0) {
-      fs.appendFileSync(destFile, `${added.join('\n')}\n`)
-      result.copiedFiles++
+    if (added.length === 0) {
+      return
     }
+
+    // Same lock the app's own history writer takes (history.ts
+    // immediateFlushHistory), so a concurrently running CLI cannot interleave
+    // writes with this migration.
+    release = await lock(destFile, {
+      stale: 10000,
+      retries: { retries: 3, minTimeout: 50 },
+    })
+    // Merge-sort by timestamp so file order stays chronological — history.ts
+    // reads this file in reverse for recency, so out-of-order entries would
+    // surface migrated OpenClaude history as more recent than it is.
+    const merged = [...destLines, ...added].sort(
+      (a, b) => timestampOf(a) - timestampOf(b),
+    )
+    writeFileSyncAndFlush_DEPRECATED(destFile, `${merged.join('\n')}\n`, {
+      encoding: 'utf8',
+    })
+    result.copiedFiles++
   } catch (error) {
     result.errors.push({
       path: sourceFile,
       message: error instanceof Error ? error.message : String(error),
     })
+  } finally {
+    await release?.()
   }
 }
 
@@ -308,11 +367,28 @@ export async function runConfigHomeMigration(
     if (files.length > 0) {
       onProgress?.(name, files.length, files.length)
     }
+    // Yield once per surface so the caller's progress render can flush before
+    // the next (synchronous, blocking) surface runs.
+    await new Promise(resolve => setImmediate(resolve))
   }
 
-  mergeHistory(plan.sourceDir, plan.destDir, result)
+  const fs = getFsImplementation()
+  for (const name of SINGLE_FILE_SURFACES) {
+    const sourceFile = join(plan.sourceDir, name)
+    // Absent at the source is not an error, and must not be reported as a
+    // skip either — mirrors how the directory surfaces treat a missing dir.
+    if (!fs.existsSync(sourceFile)) {
+      continue
+    }
+    copyFileIfAbsent(sourceFile, join(plan.destDir, name), result)
+    onProgress?.(name, 1, 1)
+  }
+
+  await new Promise(resolve => setImmediate(resolve))
+  await mergeHistory(plan.sourceDir, plan.destDir, result)
   onProgress?.('history.jsonl', 1, 1)
 
+  await new Promise(resolve => setImmediate(resolve))
   mergeSettings(plan.sourceDir, plan.destDir, result)
   onProgress?.('settings.json', 1, 1)
 

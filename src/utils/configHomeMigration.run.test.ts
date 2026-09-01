@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'fs'
 import { tmpdir } from 'os'
@@ -181,22 +182,96 @@ describe('runConfigHomeMigration', () => {
     })
   })
 
-  test('appends history.jsonl without duplicating identical lines', async () => {
+  test('merges history.jsonl in timestamp order without duplicating identical lines', async () => {
     await withTempHome(async home => {
       mkdirSync(join(home, '.openclaude'), { recursive: true })
       mkdirSync(join(home, '.claude'), { recursive: true })
+      // The OpenClaude entry is OLDER than the destination's newest entry, so a
+      // naive append would leave it last — i.e. newest, since history.ts reads
+      // this file in reverse for recency.
+      const old = '{"display":"old-openclaude","timestamp":100}'
+      const shared = '{"display":"shared","timestamp":200}'
+      const recent = '{"display":"recent-claude","timestamp":300}'
       writeFileSync(
         join(home, '.openclaude', 'history.jsonl'),
-        '{"a":1}\n{"b":2}\n',
+        `${old}\n${shared}\n`,
       )
-      writeFileSync(join(home, '.claude', 'history.jsonl'), '{"b":2}\n')
+      writeFileSync(
+        join(home, '.claude', 'history.jsonl'),
+        `${shared}\n${recent}\n`,
+      )
 
       await runConfigHomeMigration(planConfigHomeMigration({ homeDir: home }))
 
       const lines = readFileSync(join(home, '.claude', 'history.jsonl'), 'utf8')
         .split('\n')
         .filter(Boolean)
-      expect(lines).toEqual(['{"b":2}', '{"a":1}'])
+      // Chronological ascending, and `shared` appears exactly once.
+      expect(lines).toEqual([old, shared, recent])
+    })
+  })
+
+  test('copies CLAUDE.md and keybindings.json when absent at the destination', async () => {
+    await withTempHome(async home => {
+      mkdirSync(join(home, '.openclaude'), { recursive: true })
+      writeFileSync(join(home, '.openclaude', 'CLAUDE.md'), '# memory\n')
+      writeFileSync(join(home, '.openclaude', 'keybindings.json'), '{"a":1}')
+
+      const result = await runConfigHomeMigration(
+        planConfigHomeMigration({ homeDir: home }),
+      )
+
+      expect(result.errors).toEqual([])
+      expect(readFileSync(join(home, '.claude', 'CLAUDE.md'), 'utf8')).toBe(
+        '# memory\n',
+      )
+      expect(
+        readFileSync(join(home, '.claude', 'keybindings.json'), 'utf8'),
+      ).toBe('{"a":1}')
+    })
+  })
+
+  test('never overwrites an existing CLAUDE.md or keybindings.json', async () => {
+    await withTempHome(async home => {
+      mkdirSync(join(home, '.openclaude'), { recursive: true })
+      mkdirSync(join(home, '.claude'), { recursive: true })
+      writeFileSync(join(home, '.openclaude', 'CLAUDE.md'), '# openclaude\n')
+      writeFileSync(join(home, '.claude', 'CLAUDE.md'), '# claude\n')
+      writeFileSync(join(home, '.openclaude', 'keybindings.json'), '{"a":1}')
+      writeFileSync(join(home, '.claude', 'keybindings.json'), '{"b":2}')
+
+      const result = await runConfigHomeMigration(
+        planConfigHomeMigration({ homeDir: home }),
+      )
+
+      expect(result.errors).toEqual([])
+      expect(readFileSync(join(home, '.claude', 'CLAUDE.md'), 'utf8')).toBe(
+        '# claude\n',
+      )
+      expect(
+        readFileSync(join(home, '.claude', 'keybindings.json'), 'utf8'),
+      ).toBe('{"b":2}')
+    })
+  })
+
+  test('does not copy through a symlinked directory', async () => {
+    await withTempHome(async home => {
+      const outside = join(home, 'outside')
+      mkdirSync(outside, { recursive: true })
+      writeFileSync(join(outside, 'vault-note.md'), 'huge\n')
+
+      const skills = join(home, '.openclaude', 'skills')
+      mkdirSync(skills, { recursive: true })
+      writeFileSync(join(skills, 'real.md'), 'real\n')
+      symlinkSync(outside, join(skills, 'linked'), 'dir')
+
+      const result = await runConfigHomeMigration(
+        planConfigHomeMigration({ homeDir: home }),
+      )
+
+      expect(result.copiedFiles).toBe(1)
+      expect(existsSync(join(home, '.claude', 'skills', 'real.md'))).toBe(true)
+      expect(existsSync(join(home, '.claude', 'skills', 'linked'))).toBe(false)
     })
   })
 
