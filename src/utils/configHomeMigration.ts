@@ -1,6 +1,7 @@
 import { homedir } from 'os'
 import { join } from 'path'
 import { getFsImplementation } from './fsOperations.js'
+import { writeFileSyncAndFlush_DEPRECATED } from './file.js'
 import { CLAUDE_CONFIG_DIRECTORIES } from './markdownConfigLoader.js'
 
 export type MigrationSurface = {
@@ -150,4 +151,164 @@ export function planConfigHomeMigration(options?: {
     conflictingSettingsKeys,
     totalFilesToCopy,
   }
+}
+
+export type MigrationResult = {
+  copiedFiles: number
+  skippedFiles: number
+  errors: { path: string; message: string }[]
+  settingsBackupPath?: string
+}
+
+function copyFileIfAbsent(
+  sourceFile: string,
+  destFile: string,
+  result: MigrationResult,
+): void {
+  const fs = getFsImplementation()
+  if (fs.existsSync(destFile)) {
+    result.skippedFiles++
+    return
+  }
+  try {
+    fs.mkdirSync(join(destFile, '..'))
+    fs.copyFileSync(sourceFile, destFile)
+    result.copiedFiles++
+  } catch (error) {
+    result.errors.push({
+      path: sourceFile,
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
+function mergeHistory(
+  sourceDir: string,
+  destDir: string,
+  result: MigrationResult,
+): void {
+  const fs = getFsImplementation()
+  const sourceFile = join(sourceDir, 'history.jsonl')
+  const destFile = join(destDir, 'history.jsonl')
+  if (!fs.existsSync(sourceFile)) {
+    return
+  }
+  if (!fs.existsSync(destFile)) {
+    copyFileIfAbsent(sourceFile, destFile, result)
+    return
+  }
+  try {
+    const readLines = (path: string): string[] =>
+      fs
+        .readFileSync(path, { encoding: 'utf8' })
+        .split('\n')
+        .filter(line => line.length > 0)
+
+    const destLines = readLines(destFile)
+    // De-duplicate by exact line content: history entries are self-contained
+    // JSON lines, so an identical line is the same event replayed rather than
+    // two distinct events.
+    const seen = new Set(destLines)
+    const added = readLines(sourceFile).filter(line => !seen.has(line))
+    if (added.length > 0) {
+      fs.appendFileSync(destFile, `${added.join('\n')}\n`)
+      result.copiedFiles++
+    }
+  } catch (error) {
+    result.errors.push({
+      path: sourceFile,
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
+function mergeSettings(
+  sourceDir: string,
+  destDir: string,
+  result: MigrationResult,
+): void {
+  const fs = getFsImplementation()
+  const sourceFile = join(sourceDir, 'settings.json')
+  const destFile = join(destDir, 'settings.json')
+  const sourceSettings = readJsonObject(sourceFile)
+  if (!sourceSettings) {
+    return
+  }
+
+  const destSettings = readJsonObject(destFile)
+  if (!destSettings) {
+    copyFileIfAbsent(sourceFile, destFile, result)
+    return
+  }
+
+  try {
+    // Timestamped backup first, in the same directory config.ts:1728 uses.
+    const backupDir = join(destDir, 'backups')
+    fs.mkdirSync(backupDir)
+    const backupPath = join(backupDir, `settings.json.backup.${Date.now()}`)
+    fs.copyFileSync(destFile, backupPath)
+    result.settingsBackupPath = backupPath
+
+    // Destination wins on conflict; source contributes only new keys.
+    const merged = { ...sourceSettings, ...destSettings }
+    fs.mkdirSync(destDir)
+    writeFileSyncAndFlush_DEPRECATED(
+      destFile,
+      `${JSON.stringify(merged, null, 2)}\n`,
+      { encoding: 'utf8' },
+    )
+    result.copiedFiles++
+  } catch (error) {
+    result.errors.push({
+      path: sourceFile,
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
+/**
+ * Copies user-level content from ~/.openclaude into ~/.claude.
+ *
+ * Invariants, enforced by configHomeMigration.run.test.ts:
+ * - never deletes, moves or modifies anything under the source
+ * - never overwrites a file that already exists at the destination
+ * - idempotent: a second run copies only what is new
+ */
+export async function runConfigHomeMigration(
+  plan: MigrationPlan,
+  onProgress?: (surfaceName: string, done: number, total: number) => void,
+): Promise<MigrationResult> {
+  const result: MigrationResult = {
+    copiedFiles: 0,
+    skippedFiles: 0,
+    errors: [],
+  }
+
+  const directoryNames = [
+    ...EXTRA_DIRECTORY_SURFACES,
+    ...CLAUDE_CONFIG_DIRECTORIES,
+  ]
+
+  for (const name of directoryNames) {
+    const sourceRoot = join(plan.sourceDir, name)
+    const files = listFilesRecursive(sourceRoot)
+    let done = 0
+    for (const sourceFile of files) {
+      const relative = sourceFile.slice(sourceRoot.length + 1)
+      copyFileIfAbsent(sourceFile, join(plan.destDir, name, relative), result)
+      done++
+      onProgress?.(name, done, files.length)
+    }
+    if (files.length > 0) {
+      onProgress?.(name, files.length, files.length)
+    }
+  }
+
+  mergeHistory(plan.sourceDir, plan.destDir, result)
+  onProgress?.('history.jsonl', 1, 1)
+
+  mergeSettings(plan.sourceDir, plan.destDir, result)
+  onProgress?.('settings.json', 1, 1)
+
+  return result
 }

@@ -1,0 +1,175 @@
+import { describe, expect, test } from 'bun:test'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import {
+  planConfigHomeMigration,
+  runConfigHomeMigration,
+} from './configHomeMigration.js'
+
+function withTempHome(fn: (home: string) => Promise<void>): Promise<void> {
+  const home = mkdtempSync(join(tmpdir(), 'config-home-run-'))
+  return fn(home).finally(() => {
+    rmSync(home, { recursive: true, force: true })
+  })
+}
+
+describe('runConfigHomeMigration', () => {
+  test('copies sessions and leaves the source untouched', async () => {
+    await withTempHome(async home => {
+      const src = join(home, '.openclaude', 'projects', '-Users-x-repo')
+      mkdirSync(src, { recursive: true })
+      writeFileSync(join(src, 'aaa.jsonl'), 'session-a\n')
+
+      const result = await runConfigHomeMigration(
+        planConfigHomeMigration({ homeDir: home }),
+      )
+
+      expect(result.copiedFiles).toBe(1)
+      expect(result.errors).toEqual([])
+      expect(
+        readFileSync(
+          join(home, '.claude', 'projects', '-Users-x-repo', 'aaa.jsonl'),
+          'utf8',
+        ),
+      ).toBe('session-a\n')
+      // Copy, never move.
+      expect(existsSync(join(src, 'aaa.jsonl'))).toBe(true)
+    })
+  })
+
+  test('never overwrites a session that already exists at the destination', async () => {
+    await withTempHome(async home => {
+      const src = join(home, '.openclaude', 'projects', '-Users-x-repo')
+      const dst = join(home, '.claude', 'projects', '-Users-x-repo')
+      mkdirSync(src, { recursive: true })
+      mkdirSync(dst, { recursive: true })
+      writeFileSync(join(src, 'shared.jsonl'), 'from-openclaude\n')
+      writeFileSync(join(dst, 'shared.jsonl'), 'from-claude-code\n')
+
+      const result = await runConfigHomeMigration(
+        planConfigHomeMigration({ homeDir: home }),
+      )
+
+      expect(result.skippedFiles).toBe(1)
+      expect(readFileSync(join(dst, 'shared.jsonl'), 'utf8')).toBe(
+        'from-claude-code\n',
+      )
+    })
+  })
+
+  test('is idempotent: a second run copies nothing new', async () => {
+    await withTempHome(async home => {
+      const src = join(home, '.openclaude', 'skills', 'my-skill')
+      mkdirSync(src, { recursive: true })
+      writeFileSync(join(src, 'SKILL.md'), 'skill body\n')
+
+      const first = await runConfigHomeMigration(
+        planConfigHomeMigration({ homeDir: home }),
+      )
+      const second = await runConfigHomeMigration(
+        planConfigHomeMigration({ homeDir: home }),
+      )
+
+      expect(first.copiedFiles).toBe(1)
+      expect(second.copiedFiles).toBe(0)
+    })
+  })
+
+  test('merges settings.json with the destination winning, after a backup', async () => {
+    await withTempHome(async home => {
+      mkdirSync(join(home, '.openclaude'), { recursive: true })
+      mkdirSync(join(home, '.claude'), { recursive: true })
+      writeFileSync(
+        join(home, '.openclaude', 'settings.json'),
+        JSON.stringify({ theme: 'dark', bashSecurityLevel: 'smart' }),
+      )
+      writeFileSync(
+        join(home, '.claude', 'settings.json'),
+        JSON.stringify({ theme: 'light' }),
+      )
+
+      const result = await runConfigHomeMigration(
+        planConfigHomeMigration({ homeDir: home }),
+      )
+
+      const merged = JSON.parse(
+        readFileSync(join(home, '.claude', 'settings.json'), 'utf8'),
+      )
+      // Destination wins on conflict; non-conflicting source keys are added.
+      expect(merged.theme).toBe('light')
+      expect(merged.bashSecurityLevel).toBe('smart')
+
+      expect(result.settingsBackupPath).toBeDefined()
+      const backups = readdirSync(join(home, '.claude', 'backups'))
+      expect(backups.length).toBe(1)
+      expect(
+        JSON.parse(
+          readFileSync(join(home, '.claude', 'backups', backups[0]!), 'utf8'),
+        ).theme,
+      ).toBe('light')
+    })
+  })
+
+  test('copies settings.json wholesale when the destination has none', async () => {
+    await withTempHome(async home => {
+      mkdirSync(join(home, '.openclaude'), { recursive: true })
+      writeFileSync(
+        join(home, '.openclaude', 'settings.json'),
+        JSON.stringify({ theme: 'dark' }),
+      )
+
+      await runConfigHomeMigration(planConfigHomeMigration({ homeDir: home }))
+
+      expect(
+        JSON.parse(
+          readFileSync(join(home, '.claude', 'settings.json'), 'utf8'),
+        ).theme,
+      ).toBe('dark')
+    })
+  })
+
+  test('appends history.jsonl without duplicating identical lines', async () => {
+    await withTempHome(async home => {
+      mkdirSync(join(home, '.openclaude'), { recursive: true })
+      mkdirSync(join(home, '.claude'), { recursive: true })
+      writeFileSync(
+        join(home, '.openclaude', 'history.jsonl'),
+        '{"a":1}\n{"b":2}\n',
+      )
+      writeFileSync(join(home, '.claude', 'history.jsonl'), '{"b":2}\n')
+
+      await runConfigHomeMigration(planConfigHomeMigration({ homeDir: home }))
+
+      const lines = readFileSync(join(home, '.claude', 'history.jsonl'), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+      expect(lines).toEqual(['{"b":2}', '{"a":1}'])
+    })
+  })
+
+  test('reports progress per surface', async () => {
+    await withTempHome(async home => {
+      const src = join(home, '.openclaude', 'agents')
+      mkdirSync(src, { recursive: true })
+      writeFileSync(join(src, 'one.md'), 'a\n')
+      writeFileSync(join(src, 'two.md'), 'b\n')
+
+      const seen: string[] = []
+      await runConfigHomeMigration(
+        planConfigHomeMigration({ homeDir: home }),
+        surface => seen.push(surface),
+      )
+
+      expect(seen).toContain('agents')
+    })
+  })
+})
