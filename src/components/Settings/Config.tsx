@@ -29,6 +29,7 @@ import { Dialog } from '../design-system/Dialog.js';
 import { Select } from '../CustomSelect/index.js';
 import { OutputStylePicker } from '../OutputStylePicker.js';
 import { LanguagePicker } from '../LanguagePicker.js';
+import { ConfigHomeMenu, describeActiveConfigHome } from './ConfigHomeMenu.js';
 import { getExternalClaudeMdIncludes, getMemoryFiles, hasExternalClaudeMdIncludes, type MemoryFileInfo } from 'src/utils/claudemd.js';
 import { KeyboardShortcutHint } from '../design-system/KeyboardShortcutHint.js';
 import { ConfigurableShortcutHint } from '../ConfigurableShortcutHint.js';
@@ -84,7 +85,7 @@ type Setting = (SettingBase & {
   onChange(value: string): void;
   type: 'managedEnum';
 });
-type SubMenu = 'Theme' | 'Model' | 'TeammateModel' | 'CompactModel' | 'ExternalIncludes' | 'OutputStyle' | 'ChannelDowngrade' | 'Language' | 'EnableAutoUpdates';
+type SubMenu = 'Theme' | 'Model' | 'TeammateModel' | 'CompactModel' | 'ExternalIncludes' | 'OutputStyle' | 'ChannelDowngrade' | 'Language' | 'EnableAutoUpdates' | 'ConfigHome';
 export function Config({
   onClose,
   context,
@@ -1032,6 +1033,14 @@ export function Config({
     type: 'managedEnum' as const,
     onChange: () => {} // handled by LanguagePicker submenu
   }, {
+    id: 'configHome',
+    label: 'Conversation & config folder',
+    value: describeActiveConfigHome().path.endsWith('.claude')
+      ? '~/.claude (shared with Claude Code)'
+      : '~/.openclaude',
+    type: 'managedEnum' as const,
+    onChange: () => {} // handled by the ConfigHome submenu
+  }, {
     id: 'editorMode',
     label: 'Editor mode',
     // Convert 'emacs' to 'normal' for backward compatibility
@@ -1645,7 +1654,7 @@ export function Config({
       }
       return;
     }
-    if (setting_0.id === 'theme' || setting_0.id === 'model' || setting_0.id === 'compactModel' || setting_0.id === 'teammateDefaultModel' || setting_0.id === 'showExternalIncludesDialog' || setting_0.id === 'outputStyle' || setting_0.id === 'language') {
+    if (setting_0.id === 'theme' || setting_0.id === 'model' || setting_0.id === 'compactModel' || setting_0.id === 'teammateDefaultModel' || setting_0.id === 'showExternalIncludesDialog' || setting_0.id === 'outputStyle' || setting_0.id === 'language' || setting_0.id === 'configHome') {
       // managedEnum items open a submenu — isDirty is set by the submenu's
       // completion callback, not here (submenu may be cancelled).
       switch (setting_0.id) {
@@ -1675,6 +1684,10 @@ export function Config({
           return;
         case 'language':
           setShowSubmenu('Language');
+          setTabsHidden(true);
+          return;
+        case 'configHome':
+          setShowSubmenu('ConfigHome');
           setTabsHidden(true);
           return;
       }
@@ -1971,6 +1984,27 @@ export function Config({
               <ConfigurableShortcutHint action="confirm:no" context="Settings" fallback="Esc" description="cancel" />
             </Byline>
           </Text>
+        </> : showSubmenu === 'ConfigHome' ? <>
+          <ConfigHomeMenu onComplete={(mode, migrated) => {
+        isDirty.current = true;
+        saveGlobalConfig(current => ({
+          ...current,
+          configHome: mode
+        }));
+        setGlobalConfig({
+          ...getGlobalConfig(),
+          configHome: mode
+        });
+        setShowSubmenu(null);
+        setTabsHidden(false);
+        void logEvent('tengu_config_home_changed', {
+          mode: mode as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+          migrated: String(migrated) as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
+        });
+      }} onCancel={() => {
+        setShowSubmenu(null);
+        setTabsHidden(false);
+      }} />
         </> : showSubmenu === 'EnableAutoUpdates' ? <Dialog title="Enable Auto-Updates" onCancel={() => {
       setShowSubmenu(null);
       setTabsHidden(false);
