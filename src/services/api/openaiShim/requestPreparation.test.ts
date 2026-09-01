@@ -127,7 +127,7 @@ test('prepares tools and streaming options for a remote chat route', async () =>
   })
 })
 
-test('flags Gemini requests so message conversion drops inline images', async () => {
+test('flags Gemini requests with formatForGemini for message conversion', async () => {
   await ensureIntegrationsLoaded()
   const processEnv = {
     OPENAI_BASE_URL: 'https://generativelanguage.googleapis.com/v1beta/openai',

@@ -112,13 +112,6 @@ export function convertContentBlocks(
         break
       case 'image':
       case 'image_url': {
-        if (options?.formatForGemini) {
-          parts.push({
-            type: 'text',
-            text: '[Inline image omitted for Gemini API compatibility]',
-          })
-          break
-        }
         if (options?.supportsImageInputs === false) {
           throw new Error(
             'The active provider accepts text-only messages and does not support image inputs.',

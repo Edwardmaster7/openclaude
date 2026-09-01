@@ -111,7 +111,7 @@ test('accepts image_url tool results alongside image tool results', () => {
   ])
 })
 
-test('formatForGemini replaces inline images with a text placeholder', () => {
+test('formatForGemini preserves inline images in user messages as image_url', () => {
   const messages = convertMessages([{
     role: 'user',
     content: [{
@@ -120,7 +120,28 @@ test('formatForGemini replaces inline images with a text placeholder', () => {
     }],
   }], undefined, { formatForGemini: true })
 
-  expect(messages[0]?.content).toBe('[Inline image omitted for Gemini API compatibility]')
+  expect(messages[0]?.content).toEqual([
+    { type: 'text', text: 'Image attached.' },
+    { type: 'image_url', image_url: { url: 'data:image/png;base64,ZmFrZQ==' } },
+  ])
+})
+
+test('formatForGemini preserves mixed text and image in user messages', () => {
+  const messages = convertMessages([{
+    role: 'user',
+    content: [
+      { type: 'text', text: 'descreva essa imagem' },
+      {
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: 'ZmFrZQ==' },
+      },
+    ],
+  }], undefined, { formatForGemini: true })
+
+  expect(messages[0]?.content).toEqual([
+    { type: 'text', text: 'descreva essa imagem' },
+    { type: 'image_url', image_url: { url: 'data:image/png;base64,ZmFrZQ==' } },
+  ])
 })
 
 test('formatForGemini replaces image tool results with a text placeholder', () => {

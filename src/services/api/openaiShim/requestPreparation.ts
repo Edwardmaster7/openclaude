@@ -183,9 +183,9 @@ export function prepareOpenAIRequest({
     !shimConfig.endpointPath &&
     isDirectLocalOllamaEndpoint(request.baseUrl) &&
     isLikelyOllamaEndpoint(request.baseUrl)
-  // Gemini via an OpenAI-compatible chat_completions surface (OpenRouter,
-  // opengateway, etc.) cannot render inline images the way native Gemini
-  // does — drop them to a text placeholder instead of erroring/garbling.
+  // Gemini via an OpenAI-compatible chat_completions surface accepts image_url
+  // in user messages, but rejects image_url in tool results (role: 'tool').
+  // formatForGemini flags message conversion to drop image blocks from tool results.
   const isGeminiRequest =
     isGeminiMode() ||
     hasGeminiApiHost(request.baseUrl) ||
