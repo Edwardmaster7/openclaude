@@ -1,7 +1,8 @@
 import { feature } from 'bun:bundle'
 import mergeWith from 'lodash-es/mergeWith.js'
 import { homedir } from 'os'
-import { dirname, join, resolve } from 'path'
+import { dirname, join, relative, resolve } from 'path'
+import { readConfigHomePreference } from '../configHome.js'
 import { z } from 'zod/v4'
 import {
   getFlagSettingsInline,
@@ -306,18 +307,25 @@ export function getSettingsFilePathForSource(
     }
     case 'projectSettings':
     case 'localSettings': {
+      const rootPath = getSettingsRootPathForSource(source)
       const openClaudePath = join(
-        getSettingsRootPathForSource(source),
+        rootPath,
         getRelativeSettingsFilePathForSource(source),
       )
       const legacyPath = join(
-        getSettingsRootPathForSource(source),
+        rootPath,
         source === 'projectSettings' ? '.claude/settings.json' : '.claude/settings.local.json',
       )
-      if (
-        !getFsImplementation().existsSync(openClaudePath) &&
-        getFsImplementation().existsSync(legacyPath)
-      ) {
+      const fs = getFsImplementation()
+      if (fs.existsSync(openClaudePath)) {
+        return openClaudePath
+      }
+      if (fs.existsSync(legacyPath)) {
+        return legacyPath
+      }
+      const hasClaudeDir = fs.existsSync(join(rootPath, '.claude'))
+      const hasOpenClaudeDir = fs.existsSync(join(rootPath, '.openclaude'))
+      if (!hasOpenClaudeDir && (hasClaudeDir || readConfigHomePreference() === 'claude')) {
         return legacyPath
       }
       return openClaudePath
@@ -602,7 +610,7 @@ export function updateSettingsForSource(
 
     if (source === 'localSettings' || source === 'projectSettings') {
       // Okay to add to gitignore async without awaiting
-      const relativePath = getRelativeSettingsFilePathForSource(source)
+      const relativePath = relative(getOriginalCwd(), filePath)
       if (source === 'localSettings') {
         void addFileGlobRuleToGitignore(relativePath, getOriginalCwd())
       }

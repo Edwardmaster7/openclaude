@@ -120,6 +120,32 @@ describe('runConfigHomeMigration', () => {
     })
   })
 
+  test('merges settings.json when destination backups directory already exists', async () => {
+    await withTempHome(async home => {
+      mkdirSync(join(home, '.openclaude'), { recursive: true })
+      mkdirSync(join(home, '.claude', 'backups'), { recursive: true })
+      writeFileSync(
+        join(home, '.openclaude', 'settings.json'),
+        JSON.stringify({ isolateProviderSessions: true }),
+      )
+      writeFileSync(
+        join(home, '.claude', 'settings.json'),
+        JSON.stringify({ theme: 'light' }),
+      )
+
+      const result = await runConfigHomeMigration(
+        planConfigHomeMigration({ homeDir: home }),
+      )
+
+      expect(result.errors).toEqual([])
+      const merged = JSON.parse(
+        readFileSync(join(home, '.claude', 'settings.json'), 'utf8'),
+      )
+      expect(merged.isolateProviderSessions).toBe(true)
+      expect(merged.theme).toBe('light')
+    })
+  })
+
   test('copies settings.json wholesale when the destination has none', async () => {
     await withTempHome(async home => {
       mkdirSync(join(home, '.openclaude'), { recursive: true })

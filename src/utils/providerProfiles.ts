@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import { getOriginalCwd } from '../bootstrap/state.js'
 import { getSettingsForSource, updateSettingsForSource } from './settings/settings.js'
 import { getClaudeConfigHomeDir } from './envUtils.js'
 import {
@@ -117,49 +118,81 @@ export function getTerminalSessionId(): string {
 }
 
 export function getSessionLocalActiveProfileId(): string | undefined {
-  const userSettings = getSettingsForSource('userSettings');
+  const userSettings = getSettingsForSource('userSettings')
   if (!userSettings?.isolateProviderSessions) {
-    return undefined;
+    return undefined
   }
 
-  const sessionId = getTerminalSessionId();
-  const filePath = join(getClaudeConfigHomeDir(), 'sessions', `${sessionId}.json`);
+  const sessionId = getTerminalSessionId()
+  const filePath = join(getClaudeConfigHomeDir(), 'sessions', `${sessionId}.json`)
   if (!existsSync(filePath)) {
-    return undefined;
+    return undefined
   }
 
   try {
-    const content = readFileSync(filePath, 'utf8');
-    const data = JSON.parse(content);
-    return data.activeProviderProfileId;
+    const content = readFileSync(filePath, 'utf8')
+    const data = JSON.parse(content)
+    const cwd = getOriginalCwd()
+    const saveScope = userSettings?.defaultProviderSaveScope ?? 'global'
+    if (saveScope === 'project') {
+      return data.byProject?.[cwd]
+    }
+    return data.byProject?.[cwd] ?? data.activeProviderProfileId
   } catch {
-    return undefined;
+    return undefined
   }
 }
 
 export function saveSessionLocalActiveProfileId(profileId: string): void {
-  const userSettings = getSettingsForSource('userSettings');
+  const userSettings = getSettingsForSource('userSettings')
   if (!userSettings?.isolateProviderSessions) {
-    return;
+    return
   }
 
-  const sessionId = getTerminalSessionId();
-  const sessionDir = join(getClaudeConfigHomeDir(), 'sessions');
+  const sessionId = getTerminalSessionId()
+  const sessionDir = join(getClaudeConfigHomeDir(), 'sessions')
   try {
-    mkdirSync(sessionDir, { recursive: true });
-    const filePath = join(sessionDir, `${sessionId}.json`);
-    writeFileSync(filePath, JSON.stringify({ activeProviderProfileId: profileId }, null, 2), 'utf8');
-  } catch (error) {
+    mkdirSync(sessionDir, { recursive: true })
+    const filePath = join(sessionDir, `${sessionId}.json`)
+    let data: { activeProviderProfileId?: string; byProject?: Record<string, string> } = {}
+    if (existsSync(filePath)) {
+      try {
+        data = JSON.parse(readFileSync(filePath, 'utf8'))
+      } catch {
+        data = {}
+      }
+    }
+    const saveScope = userSettings?.defaultProviderSaveScope ?? 'global'
+    if (saveScope === 'project') {
+      data.byProject = data.byProject || {}
+      data.byProject[getOriginalCwd()] = profileId
+    } else {
+      data.activeProviderProfileId = profileId
+    }
+    writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8')
+  } catch {
     // Ignore
   }
 }
 
 export function deleteSessionLocalActiveProfileId(): void {
-  const sessionId = getTerminalSessionId();
-  const filePath = join(getClaudeConfigHomeDir(), 'sessions', `${sessionId}.json`);
+  const sessionId = getTerminalSessionId()
+  const filePath = join(getClaudeConfigHomeDir(), 'sessions', `${sessionId}.json`)
   if (existsSync(filePath)) {
     try {
-      rmSync(filePath, { force: true });
+      const userSettings = getSettingsForSource('userSettings')
+      const saveScope = userSettings?.defaultProviderSaveScope ?? 'global'
+      const cwd = getOriginalCwd()
+      if (saveScope === 'project') {
+        const content = readFileSync(filePath, 'utf8')
+        const data = JSON.parse(content)
+        if (data.byProject && cwd in data.byProject) {
+          delete data.byProject[cwd]
+          writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8')
+          return
+        }
+      }
+      rmSync(filePath, { force: true })
     } catch {
       // Ignore
     }

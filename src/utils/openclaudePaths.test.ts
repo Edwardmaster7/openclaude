@@ -356,6 +356,27 @@ describe('OpenClaude paths', () => {
     }
   })
 
+  test('getSettingsFilePathForSource prefers .claude for localSettings when project already uses .claude', async () => {
+    await acquireEnvMutex()
+    const tempProj = mkdtempSync(join(tmpdir(), 'openclaude-project-claude-test-'))
+    try {
+      mock.module('../bootstrap/state.js', () => ({
+        getOriginalCwd: () => tempProj,
+      }))
+
+      mkdirSync(join(tempProj, '.claude'), { recursive: true })
+      writeFileSync(join(tempProj, '.claude/settings.json'), '{}')
+
+      const { getSettingsFilePathForSource } = await importFreshSettings()
+
+      expect(getSettingsFilePathForSource('localSettings')).toBe(
+        join(tempProj, '.claude/settings.local.json'),
+      )
+    } finally {
+      rmSync(tempProj, { recursive: true, force: true })
+    }
+  })
+
   test('local installer uses openclaude wrapper path', async () => {
     await acquireEnvMutex()
     process.env.OPENCLAUDE_CONFIG_DIR = join(homedir(), '.openclaude')

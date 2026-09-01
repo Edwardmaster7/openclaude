@@ -134,6 +134,7 @@ export type FsOperations = {
     path: string,
     options?: {
       mode?: number
+      recursive?: boolean
     },
   ): void
   /** Lists directory contents with file type information */
@@ -697,7 +698,7 @@ export const NodeFsOperations: FsOperations = {
   mkdirSync(dirPath, options) {
     using _ = slowLogging`fs.mkdirSync(${dirPath})`
     const mkdirOptions: { recursive: boolean; mode?: number } = {
-      recursive: true,
+      recursive: options?.recursive ?? true,
     }
     if (options?.mode !== undefined) {
       mkdirOptions.mode = options.mode

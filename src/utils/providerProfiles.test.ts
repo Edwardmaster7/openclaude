@@ -4981,4 +4981,46 @@ describe('isolateProviderSessions and defaultProviderSaveScope', () => {
     profileB = getActiveProviderProfile()
     expect(profileB?.id).toBe('profile_1') // Session B is unaffected by Session A's change!
   })
+
+  test('isolateProviderSessions with defaultProviderSaveScope project isolates by project', async () => {
+    const { getActiveProviderProfile, setActiveProviderProfile } = await importFreshProviderProfileModules()
+    const { setOriginalCwd } = await import('../bootstrap/state.js')
+
+    mockConfigState = {
+      ...createMockConfigState(),
+      providerProfiles: [
+        buildProfile({ id: 'profile_1', name: 'Profile 1' }),
+        buildProfile({ id: 'profile_2', name: 'Profile 2' }),
+      ],
+      activeProviderProfileId: 'profile_1',
+    }
+
+    mockUserSettings.isolateProviderSessions = true
+    mockUserSettings.defaultProviderSaveScope = 'project'
+
+    process.env.TERM_SESSION_ID = 'test-session-project'
+
+    // In Project A: set active profile to profile_1
+    setOriginalCwd('/test/project-a')
+    setActiveProviderProfile('profile_1')
+    expect(mockLocalSettings.activeProviderProfileId).toBe('profile_1')
+
+    let profileA = getActiveProviderProfile()
+    expect(profileA?.id).toBe('profile_1')
+
+    // Navigate to Project B in the same terminal session
+    // Project B has its own local settings pointing to profile_2
+    setOriginalCwd('/test/project-b')
+    mockLocalSettings.activeProviderProfileId = 'profile_2'
+
+    let profileB = getActiveProviderProfile()
+    // Must return profile_2 for Project B, not Project A's profile_1
+    expect(profileB?.id).toBe('profile_2')
+
+    // Navigate back to Project A: should retain profile_1
+    setOriginalCwd('/test/project-a')
+    mockLocalSettings.activeProviderProfileId = 'profile_1'
+    profileA = getActiveProviderProfile()
+    expect(profileA?.id).toBe('profile_1')
+  })
 })

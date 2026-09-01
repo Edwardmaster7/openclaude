@@ -199,7 +199,7 @@ function copyFileIfAbsent(
     return
   }
   try {
-    fs.mkdirSync(join(destFile, '..'))
+    fs.mkdirSync(join(destFile, '..'), { recursive: true })
     fs.copyFileSync(sourceFile, destFile)
     result.copiedFiles++
   } catch (error) {
@@ -311,12 +311,12 @@ function mergeSettings(
 
     // Timestamped backup first, in the same directory config.ts:1728 uses.
     const backupDir = join(destDir, 'backups')
-    fs.mkdirSync(backupDir)
+    fs.mkdirSync(backupDir, { recursive: true })
     const backupPath = join(backupDir, `settings.json.backup.${Date.now()}`)
     fs.copyFileSync(destFile, backupPath)
     result.settingsBackupPath = backupPath
 
-    fs.mkdirSync(destDir)
+    fs.mkdirSync(destDir, { recursive: true })
     writeFileSyncAndFlush_DEPRECATED(
       destFile,
       `${JSON.stringify(merged, null, 2)}\n`,
