@@ -6,7 +6,8 @@ import { readConfigHomePreference, type ConfigHomeMode } from '../../utils/confi
 import {
   planConfigHomeMigration,
   runConfigHomeMigration,
-  type MigrationPlan
+  type MigrationPlan,
+  type MigrationResult
 } from '../../utils/configHomeMigration.js';
 import { resolveClaudeConfigHomeDir, resolveConfigDirEnv } from '../../utils/envUtils.js';
 import { getFsImplementation } from '../../utils/fsOperations.js';
@@ -18,15 +19,25 @@ export type ConfigHomeMenuProps = {
 };
 
 /**
- * Which of the four resolution levels selected the active directory. The
+ * Which of the five resolution outcomes selected the active directory. The
  * submenu shows this because "why is it still on .openclaude?" is otherwise
  * unanswerable from the UI.
+ *
+ * 'existing-openclaude' is distinct from 'preference': it covers every
+ * pre-upgrade install, where ~/.openclaude has content but the user never
+ * visited /config to make an explicit choice. Labeling that state
+ * 'preference' would falsely claim a choice the user never made.
  */
 export function describeActiveConfigHome(options?: {
   homeDir?: string;
 }): {
   path: string;
-  reason: 'env' | 'preference' | 'legacy-fallback' | 'clean-install-default';
+  reason:
+    | 'env'
+    | 'preference'
+    | 'legacy-fallback'
+    | 'clean-install-default'
+    | 'existing-openclaude';
 } {
   const homeDir = options?.homeDir ?? homedir();
   const configDirEnv = resolveConfigDirEnv({
@@ -54,7 +65,9 @@ export function describeActiveConfigHome(options?: {
   if (!hasOpenClaude && !hasClaude) {
     return { path, reason: 'clean-install-default' };
   }
-  return { path, reason: 'preference' };
+  // hasOpenClaude is true here (whether or not .claude also exists) and no
+  // preference was ever recorded — this is every pre-upgrade install.
+  return { path, reason: 'existing-openclaude' };
 }
 
 function countSessions(projectsDir: string): { projects: number; sessions: number } {
@@ -83,7 +96,8 @@ const REASON_LABEL: Record<
   env: 'set by OPENCLAUDE_CONFIG_DIR / CLAUDE_CONFIG_DIR',
   preference: 'your choice in /config',
   'legacy-fallback': 'only ~/.claude existed when OpenClaude first ran',
-  'clean-install-default': 'default for a new install'
+  'clean-install-default': 'default for a new install',
+  'existing-openclaude': 'your existing ~/.openclaude install'
 };
 
 export function ConfigHomeMenu({
@@ -104,6 +118,9 @@ export function ConfigHomeMenu({
   const [pendingMode, setPendingMode] = React.useState<ConfigHomeMode | null>(null);
   const [plan, setPlan] = React.useState<MigrationPlan | null>(null);
   const [migrating, setMigrating] = React.useState(false);
+  const [migrationErrors, setMigrationErrors] = React.useState<
+    MigrationResult['errors'] | null
+  >(null);
 
   const envLocked = active.reason === 'env';
 
@@ -120,6 +137,30 @@ export function ConfigHomeMenu({
         <Select
           options={[{ label: 'Back', value: 'back' }]}
           onChange={onCancel}
+        />
+      </Box>
+    );
+  }
+
+  if (pendingMode && migrationErrors) {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Migration finished with errors</Text>
+        <Text>
+          {migrationErrors.length} file(s) could not be copied (see below).
+          The switch to {pendingMode === 'claude' ? '~/.claude' : '~/.openclaude'}{' '}
+          still happened.
+        </Text>
+        {migrationErrors.slice(0, 2).map((error, index) => (
+          <Text key={`${error.path}-${index}`} dimColor>
+            {error.path}: {error.message}
+          </Text>
+        ))}
+        <Select
+          options={[{ label: 'Continue', value: 'continue' }]}
+          onChange={() => {
+            onComplete(pendingMode, true);
+          }}
         />
       </Box>
     );
@@ -163,7 +204,12 @@ export function ConfigHomeMenu({
             setMigrating(true);
             // Select's onChange returns void; keep the await off the handler
             // signature so this is not a misused promise.
-            void runConfigHomeMigration(plan).then(() => {
+            void runConfigHomeMigration(plan).then(result => {
+              if (result.errors.length > 0) {
+                setMigrating(false);
+                setMigrationErrors(result.errors);
+                return;
+              }
               onComplete(pendingMode, true);
             });
           }}

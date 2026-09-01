@@ -44,6 +44,25 @@ describe('describeActiveConfigHome', () => {
     })
   })
 
+  test('reports the existing-openclaude state when .openclaude has content and no preference was set', () => {
+    withTempHome(home => {
+      mkdirSync(join(home, '.openclaude'), { recursive: true })
+      const described = describeActiveConfigHome({ homeDir: home })
+      expect(described.reason).toBe('existing-openclaude')
+      expect(described.path).toBe(join(home, '.openclaude'))
+    })
+  })
+
+  test('reports the existing-openclaude state when both .openclaude and .claude exist and no preference was set', () => {
+    withTempHome(home => {
+      mkdirSync(join(home, '.openclaude'), { recursive: true })
+      mkdirSync(join(home, '.claude'), { recursive: true })
+      expect(describeActiveConfigHome({ homeDir: home }).reason).toBe(
+        'existing-openclaude',
+      )
+    })
+  })
+
   test('reports an env override', () => {
     withTempHome(home => {
       const previous = process.env.OPENCLAUDE_CONFIG_DIR
