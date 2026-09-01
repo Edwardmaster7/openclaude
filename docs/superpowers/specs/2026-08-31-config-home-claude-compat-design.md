@@ -263,8 +263,13 @@ unchanged precedence.
 
 - OpenClaude-specific keys end up in `~/.claude/settings.json`. Claude
   Code should ignore unknown keys but may warn about them.
-- OpenClaude creates its own subdirectories (`plans/`, `tasks/`,
-  `repomap-cache/`, `paste-cache/`) inside `~/.claude/`.
+- OpenClaude creates its own subdirectories inside `~/.claude/` —
+  verified: `tasks/` (`src/utils/permissions/filesystem.ts:1954`) and
+  `repomap-cache/` (`src/context/repoMap/cache.ts:24`). Note that
+  `plans/` does *not* follow the config home: `getDefaultPlansDirectory`
+  (`src/utils/plans.ts:56`) hardcodes `~/.openclaude/plans`. That
+  pre-existing inconsistency is left as-is; this change neither
+  introduces nor fixes it.
 - With both CLIs running at once, per-session transcripts do not race
   (one file per session), but `history.jsonl` and `sessions/` are shared
   and may interleave.
