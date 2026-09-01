@@ -29,7 +29,7 @@ import { Dialog } from '../design-system/Dialog.js';
 import { Select } from '../CustomSelect/index.js';
 import { OutputStylePicker } from '../OutputStylePicker.js';
 import { LanguagePicker } from '../LanguagePicker.js';
-import { ConfigHomeMenu, describeActiveConfigHome } from './ConfigHomeMenu.js';
+import { ConfigHomeMenu, describeActiveConfigHome, preserveConfigHomeOnRevert } from './ConfigHomeMenu.js';
 import { getExternalClaudeMdIncludes, getMemoryFiles, hasExternalClaudeMdIncludes, type MemoryFileInfo } from 'src/utils/claudemd.js';
 import { KeyboardShortcutHint } from '../design-system/KeyboardShortcutHint.js';
 import { ConfigurableShortcutHint } from '../ConfigurableShortcutHint.js';
@@ -1530,7 +1530,11 @@ export function Config({
     // Global config: full overwrite from snapshot. saveGlobalConfig skips if
     // the returned ref equals current (test mode checks ref; prod writes to
     // disk but content is identical).
-    saveGlobalConfig(() => initialConfig.current);
+    // configHome is deliberately carried over from the live config instead of
+    // being restored from the snapshot: picking a folder runs an irreversible
+    // migration copy, so un-setting it here would leave the files copied and
+    // the app still reading the old directory.
+    saveGlobalConfig(current => preserveConfigHomeOnRevert(initialConfig.current, current));
     // Context collapse: the toggle's onChange calls initContextCollapse() to
     // refresh the module-level enabled/armed cache. The global config restore
     // above rewrites the key on disk but doesn't touch that cache, so re-init

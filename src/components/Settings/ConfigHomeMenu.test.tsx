@@ -2,7 +2,10 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { describeActiveConfigHome } from './ConfigHomeMenu.js'
+import {
+  describeActiveConfigHome,
+  preserveConfigHomeOnRevert,
+} from './ConfigHomeMenu.js'
 
 function withTempHome(fn: (home: string) => void): void {
   const home = mkdtempSync(join(tmpdir(), 'config-home-menu-'))
@@ -79,5 +82,45 @@ describe('describeActiveConfigHome', () => {
         }
       }
     })
+  })
+})
+
+describe('preserveConfigHomeOnRevert', () => {
+  // Regression: /config's Esc path does saveGlobalConfig(() => initialConfig
+  // .current), a full overwrite from the dialog's mount-time snapshot. The
+  // config-home choice is committed before that runs (its migration copy has
+  // already happened and cannot be rolled back), so a plain snapshot restore
+  // silently un-chose the folder — files copied, app still on the old dir.
+  test('keeps a choice the snapshot predates', () => {
+    expect(
+      preserveConfigHomeOnRevert({ configHome: undefined }, {
+        configHome: 'claude',
+      }).configHome,
+    ).toBe('claude')
+  })
+
+  test('keeps a choice that replaced an earlier one', () => {
+    expect(
+      preserveConfigHomeOnRevert({ configHome: 'openclaude' }, {
+        configHome: 'claude',
+      }).configHome,
+    ).toBe('claude')
+  })
+
+  test('reverts every other key to the snapshot', () => {
+    const reverted = preserveConfigHomeOnRevert(
+      { theme: 'dark', configHome: undefined },
+      { theme: 'light', configHome: 'claude' },
+    )
+    expect(reverted.theme).toBe('dark')
+    expect(reverted.configHome).toBe('claude')
+  })
+
+  test('leaves an unset preference unset', () => {
+    expect(
+      preserveConfigHomeOnRevert({ configHome: undefined }, {
+        configHome: undefined,
+      }).configHome,
+    ).toBeUndefined()
   })
 })

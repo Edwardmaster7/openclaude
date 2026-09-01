@@ -70,6 +70,26 @@ export function describeActiveConfigHome(options?: {
   return { path, reason: 'existing-openclaude' };
 }
 
+/**
+ * Folds the committed config-home choice into /config's cancel path.
+ *
+ * Config.tsx's Escape handler reverts by writing the dialog's mount-time
+ * snapshot back wholesale (saveGlobalConfig(() => initialConfig.current)).
+ * Every other setting is meant to be undone by that. This one is not: by the
+ * time the revert can run, the migration copy has already happened and cannot
+ * be rolled back, so dropping the preference leaves files copied at ~/.claude
+ * and the app still reading ~/.openclaude — a half-migrated state with nothing
+ * in the UI to explain it.
+ *
+ * Reads the live value rather than a captured one so a choice made in another
+ * process during the dialog's lifetime survives the revert too.
+ */
+export function preserveConfigHomeOnRevert<
+  T extends { configHome?: ConfigHomeMode }
+>(snapshot: T, current: T): T {
+  return { ...snapshot, configHome: current.configHome };
+}
+
 function countSessions(projectsDir: string): { projects: number; sessions: number } {
   const fs = getFsImplementation();
   let projects = 0;
