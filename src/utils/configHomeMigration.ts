@@ -242,6 +242,14 @@ function mergeSettings(
   }
 
   try {
+    // Destination wins on conflict; source contributes only new keys.
+    const merged = { ...sourceSettings, ...destSettings }
+
+    // Idempotent: only backup and write if the merge actually changes something.
+    if (JSON.stringify(merged) === JSON.stringify(destSettings)) {
+      return
+    }
+
     // Timestamped backup first, in the same directory config.ts:1728 uses.
     const backupDir = join(destDir, 'backups')
     fs.mkdirSync(backupDir)
@@ -249,8 +257,6 @@ function mergeSettings(
     fs.copyFileSync(destFile, backupPath)
     result.settingsBackupPath = backupPath
 
-    // Destination wins on conflict; source contributes only new keys.
-    const merged = { ...sourceSettings, ...destSettings }
     fs.mkdirSync(destDir)
     writeFileSyncAndFlush_DEPRECATED(
       destFile,

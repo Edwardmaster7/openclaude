@@ -137,6 +137,50 @@ describe('runConfigHomeMigration', () => {
     })
   })
 
+  test('is idempotent for settings.json: second run with no new keys creates no backup', async () => {
+    await withTempHome(async home => {
+      mkdirSync(join(home, '.openclaude'), { recursive: true })
+      mkdirSync(join(home, '.claude'), { recursive: true })
+      // Source has bashSecurityLevel that destination doesn't have.
+      writeFileSync(
+        join(home, '.openclaude', 'settings.json'),
+        JSON.stringify({ theme: 'dark', bashSecurityLevel: 'smart' }),
+      )
+      // Destination has only theme.
+      writeFileSync(
+        join(home, '.claude', 'settings.json'),
+        JSON.stringify({ theme: 'light' }),
+      )
+
+      const first = await runConfigHomeMigration(
+        planConfigHomeMigration({ homeDir: home }),
+      )
+      const second = await runConfigHomeMigration(
+        planConfigHomeMigration({ homeDir: home }),
+      )
+
+      // First run: destination wins on conflict (theme: 'light'), source key added (bashSecurityLevel: 'smart').
+      // Merged result differs from destination, so a backup is created and settings are written.
+      expect(first.copiedFiles).toBe(1)
+      expect(first.settingsBackupPath).toBeDefined()
+      const backups = readdirSync(join(home, '.claude', 'backups'))
+      expect(backups.length).toBe(1)
+
+      // Verify the merged settings contain both the destination's theme and source's bashSecurityLevel.
+      const merged = JSON.parse(
+        readFileSync(join(home, '.claude', 'settings.json'), 'utf8'),
+      )
+      expect(merged.theme).toBe('light')
+      expect(merged.bashSecurityLevel).toBe('smart')
+
+      // Second run: merged result is identical to existing destination, so no backup and no write.
+      expect(second.copiedFiles).toBe(0)
+      expect(second.settingsBackupPath).toBeUndefined()
+      const backupsAfterSecond = readdirSync(join(home, '.claude', 'backups'))
+      expect(backupsAfterSecond.length).toBe(1) // No new backup created
+    })
+  })
+
   test('appends history.jsonl without duplicating identical lines', async () => {
     await withTempHome(async home => {
       mkdirSync(join(home, '.openclaude'), { recursive: true })
