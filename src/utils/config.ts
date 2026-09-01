@@ -713,6 +713,13 @@ export type GlobalConfig = {
   providerProfiles?: ProviderProfile[]
   activeProviderProfileId?: string
 
+  // User-level metadata directory: 'claude' shares ~/.claude with Claude
+  // Code, 'openclaude' keeps ~/.openclaude. Absent means "never chosen",
+  // which preserves the existing-install behaviour. Read by
+  // readConfigHomePreference() in configHome.ts — which parses this file
+  // directly rather than importing config.ts, to avoid an import cycle.
+  configHome?: 'claude' | 'openclaude'
+
   // Per-profile cache for models discovered from OpenAI-compatible endpoints.
   // Keyed by provider profile id.
   openaiAdditionalModelOptionsCacheByProfile?: Record<string, ModelOption[]>

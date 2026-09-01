@@ -47,11 +47,19 @@ describe('OpenClaude paths', () => {
     delete process.env.CLAUDE_CONFIG_DIR
     const { resolveClaudeConfigHomeDir } = await importFreshEnvUtils()
 
-    expect(
-      resolveClaudeConfigHomeDir({
-        homeDir: homedir(),
-      }),
-    ).toBe(join(homedir(), '.openclaude'))
+    const tempHome = mkdtempSync(join(tmpdir(), 'openclaude-paths-test-'))
+    try {
+      // An existing ~/.openclaude is what keeps an install on .openclaude;
+      // without it the clean-install default (level 4) selects ~/.claude.
+      mkdirSync(join(tempHome, '.openclaude'), { recursive: true })
+      expect(
+        resolveClaudeConfigHomeDir({
+          homeDir: tempHome,
+        }),
+      ).toBe(join(tempHome, '.openclaude'))
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true })
+    }
   })
 
   test('hard-cuts user config home to ~/.openclaude by default', async () => {
@@ -60,11 +68,18 @@ describe('OpenClaude paths', () => {
     delete process.env.CLAUDE_CONFIG_DIR
     const { resolveClaudeConfigHomeDir } = await importFreshEnvUtils()
 
-    expect(
-      resolveClaudeConfigHomeDir({
-        homeDir: homedir(),
-      }),
-    ).toBe(join(homedir(), '.openclaude'))
+    const tempHome = mkdtempSync(join(tmpdir(), 'openclaude-paths-test-'))
+    try {
+      mkdirSync(join(tempHome, '.openclaude'), { recursive: true })
+      mkdirSync(join(tempHome, '.claude'), { recursive: true })
+      expect(
+        resolveClaudeConfigHomeDir({
+          homeDir: tempHome,
+        }),
+      ).toBe(join(tempHome, '.openclaude'))
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true })
+    }
   })
 
   test('does not migrate legacy .claude config into .openclaude', async () => {
