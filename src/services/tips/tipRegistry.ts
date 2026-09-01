@@ -14,6 +14,7 @@ import { getShortcutDisplay } from '../../keybindings/shortcutFormat.js'
 import { isKairosCronEnabled } from '../../tools/ScheduleCronTool/prompt.js'
 import { is1PApiCustomer } from '../../utils/auth.js'
 import { countConcurrentSessions } from '../../utils/concurrentSessions.js'
+import { shouldSuggestSharedClaudeHome } from '../../utils/configHomeSuggestion.js'
 import { getGlobalConfig } from '../../utils/config.js'
 import {
   getEffortEnvOverride,
@@ -621,6 +622,13 @@ const externalTips: Tip[] = [
       const config = getGlobalConfig()
       return config.numStartups > 5
     },
+  },
+  {
+    id: 'config-home-claude-dir',
+    content: async () =>
+      'Use /config to keep conversations and settings in ~/.claude, shared with Claude Code',
+    cooldownSessions: 15,
+    isRelevant: async () => shouldSuggestSharedClaudeHome(),
   },
 ]
 const internalOnlyTips: Tip[] = []
