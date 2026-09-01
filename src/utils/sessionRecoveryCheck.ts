@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline'
 import { getActiveSessionLock, markCleanExit, type ActiveSessionState } from './sessionLock.js'
 import { getGlobalConfig } from './config.js'
+import { stopCapturingEarlyInput } from './earlyInput.js'
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -34,6 +35,23 @@ export async function promptCrashRecoveryUser(question: string): Promise<string>
   if (!process.stdin.isTTY) {
     return 'no'
   }
+
+  // The early-input capture already owns stdin here (raw mode + a 'readable'
+  // listener installed in cli.tsx). readline would install a second, competing
+  // reader on the same stream, so stop the capture first — its buffer is kept
+  // for the REPL, only the reader goes away.
+  stopCapturingEarlyInput()
+
+  // readline leaves stdin in a state Ink does not expect: close() drops raw
+  // mode, pauses the stream and leaves the emitKeypressEvents 'data' listener
+  // behind. With raw mode off the terminal starts echoing again, so the focus
+  // events (DECSET 1004) and bracketed-paste markers the app enables surface
+  // as literal ^[[O^[[I on screen, keystrokes bypass the prompt (no command
+  // autocomplete) and Enter inserts a newline instead of submitting. Snapshot
+  // what we are about to disturb and put it back.
+  const wasRaw = process.stdin.isRaw === true
+  const listenersBefore = new Set(process.stdin.listeners('data'))
+
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   try {
     const answer = await new Promise<string>((resolve) => {
@@ -42,6 +60,17 @@ export async function promptCrashRecoveryUser(question: string): Promise<string>
     return answer.trim()
   } finally {
     rl.close()
+    for (const listener of process.stdin.listeners('data')) {
+      if (!listenersBefore.has(listener)) {
+        process.stdin.removeListener(
+          'data',
+          listener as (...args: unknown[]) => void,
+        )
+      }
+    }
+    if (wasRaw && process.stdin.isTTY) {
+      process.stdin.setRawMode(true)
+    }
   }
 }
 
