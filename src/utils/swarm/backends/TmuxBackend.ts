@@ -66,6 +66,15 @@ function getTmuxColorName(color: AgentColorName): string {
     orange: 'colour208',
     pink: 'colour205',
     cyan: 'cyan',
+    magenta: 'colour201',
+    teal: 'colour37',
+    lime: 'colour118',
+    indigo: 'colour63',
+    violet: 'colour104',
+    rose: 'colour197',
+    amber: 'colour214',
+    emerald: 'colour48',
+    slate: 'colour244',
   }
   return tmuxColors[color]
 }

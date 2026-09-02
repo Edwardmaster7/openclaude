@@ -33,7 +33,7 @@ export const OPENAI_MODEL_DEFAULTS = {
 // ---------------------------------------------------------------------------
 export const GEMINI_MODEL_DEFAULTS = {
   opus: 'gemini-3.1-pro-preview',   // most capable
-  sonnet: 'gemini-3.7-flash',              // balanced
+  sonnet: 'gemini-3.8-flash',              // balanced
   haiku: 'gemini-3.1-flash-lite-preview',          // fast & cheap
 } as const
 

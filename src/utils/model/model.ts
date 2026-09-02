@@ -684,6 +684,7 @@ export function getPublicModelDisplayName(model: ModelName): string | null {
       'claude-sonnet-4.6': 'Claude Sonnet 4.6',
       'claude-sonnet-4.5': 'Claude Sonnet 4.5',
       'claude-haiku-4.5': 'Claude Haiku 4.5',
+      'gemini-3.8-flash': 'Gemini 3.8 Flash',
       'gemini-3.7-flash': 'Gemini 3.7 Flash',
       'gemini-3.6-flash': 'Gemini 3.6 Flash',
       'gemini-3.5-flash': 'Gemini 3.5 Flash',

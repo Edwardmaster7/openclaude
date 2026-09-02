@@ -13,6 +13,8 @@ export default defineBrand({
     supportsPreciseTokenCount: false,
   },
   modelIds: [
+    'gemini-3.8-flash',
+    'google/gemini-3.8-flash',
     'gemini-3.7-flash',
     'google/gemini-3.7-flash',
     'gemini-3.6-flash',

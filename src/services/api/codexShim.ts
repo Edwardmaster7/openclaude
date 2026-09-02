@@ -603,7 +603,7 @@ export async function performCodexRequest(options: {
             content: [{ type: 'input_text', text: '' }],
           },
         ],
-    store: undefined,
+    store: false,
     stream: true,
   }
 
