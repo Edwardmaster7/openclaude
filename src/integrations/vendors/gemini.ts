@@ -5,7 +5,7 @@ export default defineVendor({
   label: 'Google Gemini',
   classification: 'native',
   defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-  defaultModel: 'gemini-3.7-flash',
+  defaultModel: 'gemini-3.8-flash',
   requiredEnvVars: ['GEMINI_API_KEY'],
   setup: {
     requiresAuth: true,
@@ -34,6 +34,8 @@ export default defineVendor({
   catalog: {
     source: 'static',
     models: [
+      { id: 'gemini-3.8-flash', apiName: 'gemini-3.8-flash', aliases: ['google/gemini-3.8-flash'], modelDescriptorId: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+      { id: 'gemini-3.8-flash-cyber', apiName: 'gemini-3.8-flash-cyber', aliases: ['google/gemini-3.8-flash-cyber'], modelDescriptorId: 'gemini-3.8-flash-cyber', label: 'Gemini 3.8 Flash Cyber' },
       { id: 'gemini-3.7-flash', apiName: 'gemini-3.7-flash', aliases: ['google/gemini-3.7-flash'], modelDescriptorId: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
       { id: 'gemini-3.6-flash', apiName: 'gemini-3.6-flash', aliases: ['google/gemini-3.6-flash'], modelDescriptorId: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash' },
       { id: 'gemini-3.5-flash', apiName: 'gemini-3.5-flash', aliases: ['google/gemini-3.5-flash'], modelDescriptorId: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
