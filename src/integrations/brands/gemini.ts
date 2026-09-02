@@ -15,8 +15,6 @@ export default defineBrand({
   modelIds: [
     'gemini-3.8-flash',
     'google/gemini-3.8-flash',
-    'gemini-3.8-flash-cyber',
-    'google/gemini-3.8-flash-cyber',
     'gemini-3.7-flash',
     'google/gemini-3.7-flash',
     'gemini-3.6-flash',

@@ -428,11 +428,6 @@ function getGeminiModelOptions(): ModelOption[] {
       description: 'Ultra-fast & highly capable · Latest Gemini 3.8 Flash model',
     },
     {
-      value: 'gemini-3.8-flash-cyber',
-      label: 'Gemini 3.8 Flash Cyber',
-      description: 'Cybersecurity specialized · Autonomous vulnerability detection & patching',
-    },
-    {
       value: 'gemini-3.7-flash',
       label: 'Gemini 3.7 Flash',
       description: 'Fast & capable · Gemini 3.7 Flash model',

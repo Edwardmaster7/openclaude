@@ -239,8 +239,6 @@ export const MODEL_COSTS: Record<ModelShortName, ModelCosts> = {
     COST_TIER_5_25,
   'gemini-3.8-flash': COST_GEMINI_3_8_FLASH,
   'google/gemini-3.8-flash': COST_GEMINI_3_8_FLASH,
-  'gemini-3.8-flash-cyber': COST_GEMINI_3_8_FLASH,
-  'google/gemini-3.8-flash-cyber': COST_GEMINI_3_8_FLASH,
   'gemini-3.7-flash': COST_GEMINI_3_7_FLASH,
   'google/gemini-3.7-flash': COST_GEMINI_3_7_FLASH,
   'gemini-3.6-flash': COST_GEMINI_3_6_FLASH,
