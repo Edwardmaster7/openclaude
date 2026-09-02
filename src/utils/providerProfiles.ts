@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import { getOriginalCwd } from '../bootstrap/state.js'
 import { getSettingsForSource, updateSettingsForSource } from './settings/settings.js'
 import { getClaudeConfigHomeDir } from './envUtils.js'
 import {
@@ -22,6 +23,7 @@ import {
   createProfileFile,
   saveProfileFile,
   buildBedrockProfileEnv,
+  buildConcentrateProfileEnv,
   buildGeminiProfileEnv,
   buildGithubProfileEnv,
   buildMiniMaxProfileEnv,
@@ -32,6 +34,7 @@ import {
   buildXaiOAuthProfileEnv,
   buildXiaomiMimoProfileEnv,
   buildAtlasCloudProfileEnv,
+  buildApismartProfileEnv,
   buildVertexProfileEnv,
   clearManagedProfileEnv,
   deleteProfileFile,
@@ -54,8 +57,12 @@ import {
   type ProviderPreset,
 } from '../integrations/index.js'
 import {
+  getRouteDefaultBaseUrl,
   isCloudflareBaseUrl,
   isClinePassBaseUrl,
+  isCanonicalApismartInferenceBaseUrl,
+  isCanonicalConcentrateInferenceBaseUrl,
+  isCanonicalLlmtrInferenceBaseUrl,
   isFireworksBaseUrl,
   isLongcatBaseUrl,
   isNearaiBaseUrl,
@@ -68,6 +75,7 @@ import {
   sanitizeProfileCustomHeaders,
   serializeProfileCustomHeaders,
 } from './providerCustomHeaders.js'
+import { sanitizeApiKey } from './providerSecrets.js'
 import { getSettings_DEPRECATED } from './settings/settings.js'
 
 export type { ProviderPreset } from '../integrations/index.js'
@@ -110,49 +118,81 @@ export function getTerminalSessionId(): string {
 }
 
 export function getSessionLocalActiveProfileId(): string | undefined {
-  const userSettings = getSettingsForSource('userSettings');
+  const userSettings = getSettingsForSource('userSettings')
   if (!userSettings?.isolateProviderSessions) {
-    return undefined;
+    return undefined
   }
 
-  const sessionId = getTerminalSessionId();
-  const filePath = join(getClaudeConfigHomeDir(), 'sessions', `${sessionId}.json`);
+  const sessionId = getTerminalSessionId()
+  const filePath = join(getClaudeConfigHomeDir(), 'sessions', `${sessionId}.json`)
   if (!existsSync(filePath)) {
-    return undefined;
+    return undefined
   }
 
   try {
-    const content = readFileSync(filePath, 'utf8');
-    const data = JSON.parse(content);
-    return data.activeProviderProfileId;
+    const content = readFileSync(filePath, 'utf8')
+    const data = JSON.parse(content)
+    const cwd = getOriginalCwd()
+    const saveScope = userSettings?.defaultProviderSaveScope ?? 'global'
+    if (saveScope === 'project') {
+      return data.byProject?.[cwd]
+    }
+    return data.byProject?.[cwd] ?? data.activeProviderProfileId
   } catch {
-    return undefined;
+    return undefined
   }
 }
 
 export function saveSessionLocalActiveProfileId(profileId: string): void {
-  const userSettings = getSettingsForSource('userSettings');
+  const userSettings = getSettingsForSource('userSettings')
   if (!userSettings?.isolateProviderSessions) {
-    return;
+    return
   }
 
-  const sessionId = getTerminalSessionId();
-  const sessionDir = join(getClaudeConfigHomeDir(), 'sessions');
+  const sessionId = getTerminalSessionId()
+  const sessionDir = join(getClaudeConfigHomeDir(), 'sessions')
   try {
-    mkdirSync(sessionDir, { recursive: true });
-    const filePath = join(sessionDir, `${sessionId}.json`);
-    writeFileSync(filePath, JSON.stringify({ activeProviderProfileId: profileId }, null, 2), 'utf8');
-  } catch (error) {
+    mkdirSync(sessionDir, { recursive: true })
+    const filePath = join(sessionDir, `${sessionId}.json`)
+    let data: { activeProviderProfileId?: string; byProject?: Record<string, string> } = {}
+    if (existsSync(filePath)) {
+      try {
+        data = JSON.parse(readFileSync(filePath, 'utf8'))
+      } catch {
+        data = {}
+      }
+    }
+    const saveScope = userSettings?.defaultProviderSaveScope ?? 'global'
+    if (saveScope === 'project') {
+      data.byProject = data.byProject || {}
+      data.byProject[getOriginalCwd()] = profileId
+    } else {
+      data.activeProviderProfileId = profileId
+    }
+    writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8')
+  } catch {
     // Ignore
   }
 }
 
 export function deleteSessionLocalActiveProfileId(): void {
-  const sessionId = getTerminalSessionId();
-  const filePath = join(getClaudeConfigHomeDir(), 'sessions', `${sessionId}.json`);
+  const sessionId = getTerminalSessionId()
+  const filePath = join(getClaudeConfigHomeDir(), 'sessions', `${sessionId}.json`)
   if (existsSync(filePath)) {
     try {
-      rmSync(filePath, { force: true });
+      const userSettings = getSettingsForSource('userSettings')
+      const saveScope = userSettings?.defaultProviderSaveScope ?? 'global'
+      const cwd = getOriginalCwd()
+      if (saveScope === 'project') {
+        const content = readFileSync(filePath, 'utf8')
+        const data = JSON.parse(content)
+        if (data.byProject && cwd in data.byProject) {
+          delete data.byProject[cwd]
+          writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8')
+          return
+        }
+      }
+      rmSync(filePath, { force: true })
     } catch {
       // Ignore
     }
@@ -215,6 +255,35 @@ function resolveProfileCompatibility(provider: string): {
 function isClinePassProfile(profile: ProviderProfile): boolean {
   const { route } = resolveProfileCompatibility(profile.provider)
   return route.routeId === 'clinepass' || isClinePassBaseUrl(profile.baseUrl)
+}
+
+function isApismartProfile(profile: ProviderProfile): boolean {
+  const baseUrl = profile.baseUrl?.trim()
+  // Missing base URL resolves to the ApiSmart default, which is canonical.
+  // Only the documented `/v1` inference URL may carry the dedicated key —
+  // host-only or path-suffixed ApiSmart URLs are treated as retargeted.
+  return !baseUrl || isCanonicalApismartInferenceBaseUrl(baseUrl)
+}
+
+function isConcentrateProfile(profile: ProviderProfile): boolean {
+  const { route } = resolveProfileCompatibility(profile.provider)
+  if (route.routeId !== 'concentrate') {
+    return false
+  }
+  const baseUrl = profile.baseUrl?.trim()
+  // Missing base URL resolves to the Concentrate default, which is canonical.
+  // Only the documented `/v1` inference URL may carry the dedicated key —
+  // host-only or path-suffixed Concentrate URLs are treated as retargeted.
+  return !baseUrl || isCanonicalConcentrateInferenceBaseUrl(baseUrl)
+}
+
+function isLlmtrProfile(profile: ProviderProfile): boolean {
+  const { route } = resolveProfileCompatibility(profile.provider)
+  if (route.routeId !== 'llmtr') {
+    return false
+  }
+  const baseUrl = profile.baseUrl?.trim()
+  return !baseUrl || isCanonicalLlmtrInferenceBaseUrl(baseUrl)
 }
 
 function deriveGithubEnterpriseUrl(baseUrl: string | undefined): string | undefined {
@@ -281,7 +350,7 @@ function normalizeBaseUrl(value: string): string {
   return trimValue(value).replace(/\/+$/, '')
 }
 
-function resolveProfileCapabilityRouteId(
+export function resolveProfileCapabilityRouteId(
   provider: string,
   baseUrl?: string,
 ): string {
@@ -295,15 +364,22 @@ function resolveProfileCapabilityRouteId(
     return routeIdFromBaseUrl
   }
 
-  // Cloudflare and LongCat profiles retargeted away from their dedicated
-  // endpoints run generically at runtime. Mirror that boundary here so
-  // capability-driven surfaces are not stripped based on stale route ids.
+  // Dedicated-route profiles retargeted away from their documented endpoints
+  // run generically at runtime. Mirror that boundary here so capability-driven
+  // surfaces are not stripped based on stale route ids.
   if (
-    (providerRouteId === 'cloudflare' || providerRouteId === 'longcat') &&
+    (providerRouteId === 'cloudflare' ||
+      providerRouteId === 'longcat' ||
+      providerRouteId === 'concentrate' ||
+      providerRouteId === 'llmtr') &&
     baseUrl &&
     !(providerRouteId === 'cloudflare'
       ? isCloudflareBaseUrl(baseUrl)
-      : isLongcatBaseUrl(baseUrl))
+      : providerRouteId === 'longcat'
+        ? isLongcatBaseUrl(baseUrl)
+        : providerRouteId === 'concentrate'
+          ? isCanonicalConcentrateInferenceBaseUrl(baseUrl)
+          : isCanonicalLlmtrInferenceBaseUrl(baseUrl))
   ) {
     return 'custom'
   }
@@ -421,7 +497,8 @@ function sanitizeProfile(profile: ProviderProfile): ProviderProfile | null {
     provider,
     baseUrl,
     model,
-    apiKey: trimOrUndefined(profile.apiKey),
+    // Drop template/dotenv sentinels so placeholders never persist as keys.
+    apiKey: sanitizeApiKey(trimOrUndefined(profile.apiKey)),
   }
   if (supportsApiFormat && apiFormat) {
     sanitized.apiFormat = apiFormat
@@ -865,6 +942,10 @@ function isProcessEnvAlignedWithProfile(
       ? !includeApiKey ||
         sameOptionalEnvValue(processEnv.ATLAS_CLOUD_API_KEY, profile.apiKey)
       : true) &&
+    (isApismartProfile(profile)
+      ? !includeApiKey ||
+        sameOptionalEnvValue(processEnv.APISMART_API_KEY, profile.apiKey)
+      : true) &&
     (isClinePassProfile(profile)
       ? !includeApiKey ||
         sameOptionalEnvValue(processEnv.CLINE_API_KEY, profile.apiKey)
@@ -1060,7 +1141,11 @@ export function applyProviderProfileToProcessEnv(
     const normalizedProfileBaseUrl =
       route.routeId === 'xiaomi-mimo' || route.routeId === 'xiaomi-mimo-token'
         ? normalizeXiaomiMimoBaseUrl(profile.baseUrl) ?? profile.baseUrl
-        : profile.baseUrl
+        : route.routeId === 'apismart' && !profile.baseUrl?.trim()
+          ? getRouteDefaultBaseUrl('apismart') ?? profile.baseUrl
+          : route.routeId === 'concentrate' && !profile.baseUrl?.trim()
+            ? getRouteDefaultBaseUrl('concentrate') ?? profile.baseUrl
+            : profile.baseUrl
     const openAIProfileEnv: ProfileEnv = {
       OPENAI_BASE_URL: normalizedProfileBaseUrl,
       OPENAI_MODEL: primaryModel,
@@ -1087,19 +1172,30 @@ export function applyProviderProfileToProcessEnv(
       }
     }
 
-    if (profile.apiKey) {
+    const withholdRetargetedApismartCredential =
+      route.routeId === 'apismart' && !isApismartProfile(profile)
+    const withholdRetargetedConcentrateCredential =
+      route.routeId === 'concentrate' && !isConcentrateProfile(profile)
+    const withholdRetargetedLlmtrCredential =
+      route.routeId === 'llmtr' && !isLlmtrProfile(profile)
+    if (
+      profile.apiKey &&
+      !withholdRetargetedApismartCredential &&
+      !withholdRetargetedConcentrateCredential &&
+      !withholdRetargetedLlmtrCredential
+    ) {
       openAIProfileEnv.OPENAI_API_KEY = profile.apiKey
-      if (route.vendorId === 'minimax' || profile.baseUrl.toLowerCase().includes('minimax')) {
+      if (route.vendorId === 'minimax' || normalizedProfileBaseUrl.toLowerCase().includes('minimax')) {
         openAIProfileEnv.MINIMAX_API_KEY = profile.apiKey
       }
       if (
         route.gatewayId === 'nvidia-nim' ||
-        profile.baseUrl.toLowerCase().includes('nvidia') ||
-        profile.baseUrl.toLowerCase().includes('integrate.api.nvidia')
+        normalizedProfileBaseUrl.toLowerCase().includes('nvidia') ||
+        normalizedProfileBaseUrl.toLowerCase().includes('integrate.api.nvidia')
       ) {
         openAIProfileEnv.NVIDIA_API_KEY = profile.apiKey
       }
-      if (route.routeId === 'bankr' || profile.baseUrl.toLowerCase().includes('bankr')) {
+      if (route.routeId === 'bankr' || normalizedProfileBaseUrl.toLowerCase().includes('bankr')) {
         openAIProfileEnv.BNKR_API_KEY = profile.apiKey
       }
       if (route.routeId === 'xai' || isXaiBaseUrl(profile.baseUrl)) {
@@ -1108,7 +1204,7 @@ export function applyProviderProfileToProcessEnv(
       if (isAimlapiProfile) {
         openAIProfileEnv.AIMLAPI_API_KEY = profile.apiKey
       }
-      if (route.routeId === 'venice' || profile.baseUrl.toLowerCase().includes('api.venice.ai')) {
+      if (route.routeId === 'venice' || normalizedProfileBaseUrl.toLowerCase().includes('api.venice.ai')) {
         openAIProfileEnv.VENICE_API_KEY = profile.apiKey
       }
       if (
@@ -1118,8 +1214,14 @@ export function applyProviderProfileToProcessEnv(
       ) {
         openAIProfileEnv.MIMO_API_KEY = profile.apiKey
       }
-      if (route.routeId === 'atlas-cloud' || profile.baseUrl.toLowerCase().includes('atlascloud')) {
+      if (route.routeId === 'atlas-cloud' || normalizedProfileBaseUrl.toLowerCase().includes('atlascloud')) {
         openAIProfileEnv.ATLAS_CLOUD_API_KEY = profile.apiKey
+      }
+      if (isApismartProfile(profile)) {
+        openAIProfileEnv.APISMART_API_KEY = profile.apiKey
+      }
+      if (isConcentrateProfile(profile)) {
+        openAIProfileEnv.CONCENTRATE_API_KEY = profile.apiKey
       }
       if (isClinePassProfile(profile)) {
         openAIProfileEnv.CLINE_API_KEY = profile.apiKey
@@ -1164,6 +1266,58 @@ export function applyProviderProfileToProcessEnv(
           openAIProfileEnv.OPENAI_API_KEY ?? ambientAimlapiKey
         openAIProfileEnv.AIMLAPI_API_KEY =
           openAIProfileEnv.AIMLAPI_API_KEY ?? ambientAimlapiKey
+      }
+    }
+    // Keep ApiSmart route identity even when the profile is retargeted to a
+    // proxy. Dedicated credentials stay withheld above; the route id is what
+    // lets buildLaunchEnv refuse ambient APISMART_API_KEY / mirrored
+    // OPENAI_API_KEY on relaunch (AIMLAPI parity).
+    if (route.routeId === 'apismart') {
+      openAIProfileEnv.CLAUDE_CODE_PROVIDER_ROUTE_ID = 'apismart'
+      // Keyless canonical ApiSmart profiles resolve ambient dedicated
+      // credentials the same way AIMLAPI does. Proxy / non-canonical hosts
+      // must not receive the ambient key.
+      if (isApismartProfile(profile)) {
+        const ambientApismartKey = sanitizeApiKey(process.env.APISMART_API_KEY)
+        if (ambientApismartKey) {
+          openAIProfileEnv.OPENAI_API_KEY =
+            openAIProfileEnv.OPENAI_API_KEY ?? ambientApismartKey
+          openAIProfileEnv.APISMART_API_KEY =
+            openAIProfileEnv.APISMART_API_KEY ?? ambientApismartKey
+        }
+      }
+    }
+    // Stamp dedicated Concentrate profile identity and mirror its credential so
+    // the saved profile relaunches authenticated.
+    if (route.routeId === 'concentrate') {
+      openAIProfileEnv.CLAUDE_CODE_PROVIDER_ROUTE_ID = 'concentrate'
+      // Keyless canonical Concentrate profiles may resolve the ambient dedicated
+      // credential the same way ApiSmart does.
+      if (isConcentrateProfile(profile) && !profile.apiKey) {
+        const ambientConcentrateKey = sanitizeApiKey(
+          process.env.CONCENTRATE_API_KEY,
+        )
+        if (ambientConcentrateKey) {
+          openAIProfileEnv.OPENAI_API_KEY =
+            openAIProfileEnv.OPENAI_API_KEY ?? ambientConcentrateKey
+          openAIProfileEnv.CONCENTRATE_API_KEY = ambientConcentrateKey
+        }
+      }
+    }
+    // A keyless canonical LLMTR profile may use the dedicated credential from
+    // the ambient environment. Profile application clears all managed provider
+    // variables before installing this object, so adopt it here while the
+    // canonical endpoint boundary is still known. Never carry it to a
+    // retargeted profile.
+    if (route.routeId === 'llmtr') {
+      openAIProfileEnv.CLAUDE_CODE_PROVIDER_ROUTE_ID = 'llmtr'
+      if (isLlmtrProfile(profile) && !profile.apiKey) {
+        const ambientLlmtrKey = sanitizeApiKey(process.env.LLMTR_API_KEY)
+        if (ambientLlmtrKey) {
+          openAIProfileEnv.OPENAI_API_KEY =
+            openAIProfileEnv.OPENAI_API_KEY ?? ambientLlmtrKey
+          openAIProfileEnv.LLMTR_API_KEY = ambientLlmtrKey
+        }
       }
     }
     if (route.gatewayId === 'nvidia-nim') {
@@ -1447,11 +1601,27 @@ function buildOpenAICompatibleStartupEnv(
   if (isCodexBaseUrl(activeProfile.baseUrl)) {
     return null
   }
+  const activeProfileRouteId = resolveProfileRoute(activeProfile.provider).routeId
+  const withholdRetargetedApismartCredential =
+    activeProfileRouteId === 'apismart' &&
+    !isApismartProfile(activeProfile)
+  const withholdRetargetedConcentrateCredential =
+    activeProfileRouteId === 'concentrate' &&
+    !isConcentrateProfile(activeProfile)
+  const withholdRetargetedLlmtrCredential =
+    activeProfileRouteId === 'llmtr' && !isLlmtrProfile(activeProfile)
   const isAimlapiProfile =
     activeProfile.provider === 'aimlapi' ||
     resolveRouteIdFromBaseUrl(activeProfile.baseUrl) === 'aimlapi'
+  const isConcentrateProfileFlag = isConcentrateProfile(activeProfile)
+  const isLlmtrProfileFlag = isLlmtrProfile(activeProfile)
 
-  if (activeProfile.apiKey) {
+  if (
+    activeProfile.apiKey &&
+    !withholdRetargetedApismartCredential &&
+    !withholdRetargetedConcentrateCredential &&
+    !withholdRetargetedLlmtrCredential
+  ) {
     const strictEnv = buildOpenAIProfileEnv({
       goal: 'balanced',
       model: activeProfile.model,
@@ -1475,6 +1645,15 @@ function buildOpenAICompatibleStartupEnv(
       // persist the dedicated key too or it relaunches unauthenticated.
       if (activeProfile.baseUrl?.toLowerCase().includes('atlascloud')) {
         strictEnv.ATLAS_CLOUD_API_KEY = activeProfile.apiKey
+      }
+      if (isApismartProfile(activeProfile)) {
+        strictEnv.APISMART_API_KEY = activeProfile.apiKey
+      }
+      if (isConcentrateProfileFlag) {
+        strictEnv.CONCENTRATE_API_KEY = activeProfile.apiKey
+      }
+      if (isLlmtrProfileFlag) {
+        strictEnv.LLMTR_API_KEY = activeProfile.apiKey
       }
       if (isClinePassProfile(activeProfile)) {
         strictEnv.CLINE_API_KEY = activeProfile.apiKey
@@ -1522,7 +1701,26 @@ function buildOpenAICompatibleStartupEnv(
   if (isAimlapiProfile) {
     env.CLAUDE_CODE_PROVIDER_ROUTE_ID = 'aimlapi'
   }
-  if (activeProfile.apiKey) {
+  // Preserve ApiSmart identity on retargeted/proxy startup envs so relaunch
+  // withholding can refuse ambient dedicated credentials. Canonical profiles
+  // already stamp this via buildApismartProfileEnv.
+  if (activeProfileRouteId === 'apismart') {
+    env.CLAUDE_CODE_PROVIDER_ROUTE_ID = 'apismart'
+  }
+  // Preserve Concentrate identity for retargeted profiles too, so a later
+  // launch can apply the same dedicated-credential boundary.
+  if (activeProfileRouteId === 'concentrate') {
+    env.CLAUDE_CODE_PROVIDER_ROUTE_ID = 'concentrate'
+  }
+  if (activeProfileRouteId === 'llmtr') {
+    env.CLAUDE_CODE_PROVIDER_ROUTE_ID = 'llmtr'
+  }
+  if (
+    activeProfile.apiKey &&
+    !withholdRetargetedApismartCredential &&
+    !withholdRetargetedConcentrateCredential &&
+    !withholdRetargetedLlmtrCredential
+  ) {
     env.OPENAI_API_KEY = activeProfile.apiKey
     if (activeProfile.baseUrl?.toLowerCase().includes('bankr')) {
       env.BNKR_API_KEY = activeProfile.apiKey
@@ -1544,6 +1742,15 @@ function buildOpenAICompatibleStartupEnv(
     }
     if (activeProfile.baseUrl?.toLowerCase().includes('atlascloud')) {
       env.ATLAS_CLOUD_API_KEY = activeProfile.apiKey
+    }
+    if (isApismartProfile(activeProfile)) {
+      env.APISMART_API_KEY = activeProfile.apiKey
+    }
+    if (isConcentrateProfileFlag) {
+      env.CONCENTRATE_API_KEY = activeProfile.apiKey
+    }
+    if (isLlmtrProfileFlag) {
+      env.LLMTR_API_KEY = activeProfile.apiKey
     }
     if (isClinePassProfile(activeProfile)) {
       env.CLINE_API_KEY = activeProfile.apiKey
@@ -1734,6 +1941,32 @@ function buildStartupProfileFromActiveProfile(
           : null
       }
 
+      if (route.routeId === 'apismart' && isApismartProfile(activeProfile)) {
+        const env =
+          buildApismartProfileEnv({
+            model: getPrimaryModel(activeProfile.model),
+            baseUrl: activeProfile.baseUrl,
+            apiKey: activeProfile.apiKey,
+            processEnv: process.env,
+          }) ?? null
+        return env
+          ? { profile: 'openai', env: applySupportedProfileCustomHeaders(activeProfile, env) }
+          : null
+      }
+
+      if (route.routeId === 'concentrate' && isConcentrateProfile(activeProfile)) {
+        const env =
+          buildConcentrateProfileEnv({
+            model: getPrimaryModel(activeProfile.model),
+            baseUrl: activeProfile.baseUrl,
+            apiKey: activeProfile.apiKey,
+            processEnv: process.env,
+          }) ?? null
+        return env
+          ? { profile: 'openai', env: applySupportedProfileCustomHeaders(activeProfile, env) }
+          : null
+      }
+
       if (route.vendorId === 'nearai') {
         const env = buildOpenAICompatibleStartupEnv(activeProfile)
         return env ? { profile: 'openai', env } : null
@@ -1768,6 +2001,12 @@ function triggerStartupDiscoveryRefreshForProfile(
 ): void {
   const route = resolveProfileRoute(profile.provider)
   if (route.routeId === 'unknown-fallback') {
+    return
+  }
+  if (route.routeId === 'apismart' && !isApismartProfile(profile)) {
+    return
+  }
+  if (route.routeId === 'llmtr' && !isLlmtrProfile(profile)) {
     return
   }
 

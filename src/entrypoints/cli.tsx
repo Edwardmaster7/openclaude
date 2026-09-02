@@ -1,4 +1,8 @@
 import { feature } from 'bun:bundle';
+import {
+  BACKGROUND_SESSION_ID_ENV,
+  BACKGROUND_SESSION_LAUNCHER_PID_ENV,
+} from '../cli/bgRouting.js'
 
 // Defensive compatibility guard for environments where globalThis.File is
 // unexpectedly absent. OpenClaude's supported runtime is Node >=22; this is
@@ -52,6 +56,180 @@ process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS ??= 'true'
 // eslint-disable-next-line custom-rules/no-top-level-side-effects
 process.env.COREPACK_ENABLE_AUTO_PIN = '0';
 
+const SKILLS_LEADING_BOOLEAN_FLAGS = new Set([
+  '--bare',
+  '--debug',
+  '--debug-to-stderr',
+  '--yolo', // alias for --dangerously-skip-permissions
+  '--dangerously-skip-permissions',
+  '--allow-dangerously-skip-permissions',
+  '--disable-slash-commands',
+  '--enable-auth-status',
+  '--fork-session',
+  '--ide',
+  '--include-hook-events',
+  '--include-partial-messages',
+  '--init',
+  '--init-only',
+  '--maintenance',
+  '--mcp-debug',
+  '--no-chrome',
+  '--no-session-persistence',
+  '--replay-user-messages',
+  '--strict-mcp-config',
+  '--verbose',
+])
+
+const SKILLS_LEADING_VALUE_FLAGS = new Set([
+  '--agent',
+  '--append-system-prompt',
+  '--append-system-prompt-file',
+  '--debug-file',
+  '--effort',
+  '--fallback-model',
+  '--heartbeat',
+  '--input-format',
+  '--json-schema',
+  '--max-budget-usd',
+  '--max-thinking-tokens',
+  '--max-turns',
+  '--model',
+  '--output-format',
+  '--permission-mode',
+  '--permission-prompt-tool',
+  '--provider',
+  '--resume-session-at',
+  '--session-id',
+  '--settings',
+  '--setting-sources',
+  '--system-prompt',
+  '--system-prompt-file',
+  '--thinking',
+  '--workload',
+  '-n',
+  '--name',
+])
+
+const SKILLS_LEADING_OPTIONAL_VALUE_FLAGS = new Set([
+  '--continue',
+  '--from-pr',
+  '--print',
+  '-c',
+  '-p',
+  '-r',
+  '--resume',
+])
+
+const SKILLS_LEADING_MULTI_VALUE_FLAGS = new Set([
+  '--add-dir',
+  '--allowedTools',
+  '--allowed-tools',
+  '--betas',
+  '--disallowedTools',
+  '--disallowed-tools',
+  '--file',
+  '--mcp-config',
+  '--plugin-dir',
+  '--provider-env-file',
+  '--tools',
+])
+
+type SkillsCliParseResult = {
+  additionalDirectories: string[]
+  args: string[]
+}
+
+function getSkillsCliArgs(args: string[]): SkillsCliParseResult | undefined {
+  const additionalDirectories: string[] = []
+  let sawPromptModeFlag = false
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]
+    if (arg === 'skills') {
+      if (sawPromptModeFlag) {
+        return undefined
+      }
+      return { additionalDirectories, args: args.slice(index) }
+    }
+    if (SKILLS_LEADING_BOOLEAN_FLAGS.has(arg)) {
+      continue
+    }
+    if (SKILLS_LEADING_MULTI_VALUE_FLAGS.has(arg)) {
+      let consumed = false
+      while (args[index + 1] && !args[index + 1]!.startsWith('-')) {
+        index += 1
+        const value = args[index]
+        if (value === 'skills') {
+          if (sawPromptModeFlag) {
+            return undefined
+          }
+          return {
+            additionalDirectories,
+            args: args.slice(index),
+          }
+        }
+        if (value && arg === '--add-dir') {
+          additionalDirectories.push(value)
+        }
+        consumed = true
+      }
+      if (!consumed) {
+        return undefined
+      }
+      continue
+    }
+    const multiValueEqualsFlag = Array.from(SKILLS_LEADING_MULTI_VALUE_FLAGS)
+      .find(flag => arg?.startsWith(`${flag}=`))
+    if (multiValueEqualsFlag) {
+      const value = arg.slice(`${multiValueEqualsFlag}=`.length)
+      if (!value) {
+        return undefined
+      }
+      if (multiValueEqualsFlag === '--add-dir') {
+        additionalDirectories.push(value)
+      }
+      continue
+    }
+    if (
+      SKILLS_LEADING_VALUE_FLAGS.has(arg) &&
+      args[index + 1] &&
+      !args[index + 1]!.startsWith('-')
+    ) {
+      index += 1
+      continue
+    }
+    if (
+      Array.from(SKILLS_LEADING_VALUE_FLAGS).some(flag =>
+        arg?.startsWith(`${flag}=`),
+      )
+    ) {
+      continue
+    }
+    if (SKILLS_LEADING_OPTIONAL_VALUE_FLAGS.has(arg)) {
+      sawPromptModeFlag = true
+      if (
+        args[index + 1] &&
+        args[index + 1] !== 'skills' &&
+        !args[index + 1]!.startsWith('-')
+      ) {
+        index += 1
+      }
+      continue
+    }
+    if (
+      Array.from(SKILLS_LEADING_OPTIONAL_VALUE_FLAGS).some(flag =>
+        arg?.startsWith(`${flag}=`),
+      )
+    ) {
+      sawPromptModeFlag = true
+      continue
+    }
+    return undefined
+  }
+
+  return undefined
+}
+
 // Set max heap size for child processes. The current CLI process is already
 // running by this point; the package launcher raises its heap before importing
 // dist/cli.mjs. Keeping NODE_OPTIONS here preserves the larger cap for tools or
@@ -89,6 +267,7 @@ type CliEntrypointOptions = {
 type CliEntrypointImporters = {
   startupProfiler: () => Promise<typeof import('../utils/startupProfiler.js')>
   bg: () => Promise<typeof import('../cli/bg.js')>
+  bgFinalizer: () => Promise<typeof import('../cli/bgFinalizer.js')>
   providerFlag: () => Promise<typeof import('../utils/providerFlag.js')>
   envFile: () => Promise<typeof import('../utils/envFile.js')>
   config: () => Promise<typeof import('../utils/config.js')>
@@ -116,6 +295,7 @@ type CliEntrypointImporters = {
 const defaultCliEntrypointImporters: CliEntrypointImporters = {
   startupProfiler: () => import('../utils/startupProfiler.js'),
   bg: () => import('../cli/bg.js'),
+  bgFinalizer: () => import('../cli/bgFinalizer.js'),
   providerFlag: () => import('../utils/providerFlag.js'),
   envFile: () => import('../utils/envFile.js'),
   config: () => import('../utils/config.js'),
@@ -152,8 +332,21 @@ export async function main(
   args: string[] = process.argv.slice(2),
   options: CliEntrypointOptions = {},
 ): Promise<void> {
-  const bgSessionsEnabled = isBgSessionsEnabled(options)
   const importers = getCliEntrypointImporters(options.importers)
+  // The detached CLI is the registered background-session PID. Establish
+  // exact registry ownership and install its terminal finalizer before any
+  // fast path or startup validation can call process.exit(). The private env
+  // value only routes this check; the registry's exact ID/PID match is the
+  // authority.
+  if (
+    process.env[BACKGROUND_SESSION_ID_ENV] !== undefined ||
+    process.env[BACKGROUND_SESSION_LAUNCHER_PID_ENV] !== undefined
+  ) {
+    const { prepareBackgroundSessionFinalizer } = await importers.bgFinalizer()
+    await prepareBackgroundSessionFinalizer()
+  }
+
+  const bgSessionsEnabled = isBgSessionsEnabled(options)
   let reapplyProviderEnvFileValues = () => {}
   let reapplyProviderFlagValues = () => {}
   const reapplyExplicitProviderInputs = () => {
@@ -252,6 +445,20 @@ export async function main(
     applySafeConfigEnvironmentVariables()
   }
   reapplyExplicitProviderInputs()
+
+  // Local skills management must stay available even when provider startup
+  // configuration is broken, so users can inspect/fix skills from scripts.
+  const skillsCliArgs = getSkillsCliArgs(args)
+  if (skillsCliArgs) {
+    const { setAdditionalDirectoriesForClaudeMd } = await import(
+      '../bootstrap/state.js'
+    )
+    setAdditionalDirectoriesForClaudeMd(skillsCliArgs.additionalDirectories)
+    const { runSkillsCli } = await import('../cli/handlers/skillsCli.js')
+    process.argv = [process.argv[0]!, process.argv[1]!, ...skillsCliArgs.args]
+    await runSkillsCli(skillsCliArgs.args)
+    return
+  }
 
   const { applyStartupEnvFromProfile } = await importers.providerProfile()
   await applyStartupEnvFromProfile({

@@ -1,6 +1,7 @@
 import memoize from 'lodash-es/memoize.js'
 import { homedir } from 'os'
 import { join } from 'path'
+import { readConfigHomePreference } from './configHome.js'
 import { getFsImplementation } from './fsOperations.js'
 
 /**
@@ -28,6 +29,7 @@ export function resolveClaudeConfigHomeDir(options?: {
   configDirEnv?: string
   homeDir?: string
 }): string {
+  // Level 1: an explicit env override always wins.
   if (options?.configDirEnv) {
     return options.configDirEnv.normalize('NFC')
   }
@@ -36,13 +38,31 @@ export function resolveClaudeConfigHomeDir(options?: {
   const openClaudeDir = join(homeDir, '.openclaude')
   const claudeDir = join(homeDir, '.claude')
 
+  // Level 2: the user's explicit choice, made in /config.
+  const preference = readConfigHomePreference({ homeDir })
+  if (preference === 'claude') {
+    return claudeDir.normalize('NFC')
+  }
+  if (preference === 'openclaude') {
+    return openClaudeDir.normalize('NFC')
+  }
+
   try {
     const fs = getFsImplementation()
-    if (!fs.existsSync(openClaudeDir) && fs.existsSync(claudeDir)) {
+    const hasOpenClaude = fs.existsSync(openClaudeDir)
+    // Level 3: legacy install with only ~/.claude present.
+    if (!hasOpenClaude && fs.existsSync(claudeDir)) {
+      return claudeDir.normalize('NFC')
+    }
+    // Level 4: clean install — neither directory exists yet. New installs
+    // share Claude Code's directory by default. An existing populated
+    // ~/.openclaude falls through to the return below and stays put, so
+    // nobody loses sight of their history on upgrade.
+    if (!hasOpenClaude) {
       return claudeDir.normalize('NFC')
     }
   } catch {
-    // Ignore fs errors and fall back to default openClaudeDir
+    // Ignore fs errors and fall back to the default openClaudeDir
   }
 
   return openClaudeDir.normalize('NFC')

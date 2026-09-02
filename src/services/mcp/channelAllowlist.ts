@@ -16,8 +16,10 @@
  */
 
 import { z } from 'zod/v4'
+import { getSubscriptionType } from '../../utils/auth.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { parsePluginIdentifier } from '../../utils/plugins/pluginIdentifier.js'
+import { getSettingsForSource } from '../../utils/settings/settings.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/growthbook.js'
 
 export type ChannelAllowlistEntry = {
@@ -44,12 +46,16 @@ export function getChannelAllowlist(): ChannelAllowlistEntry[] {
 }
 
 /**
- * Overall channels on/off. Checked before any per-server gating —
- * when false, --channels is a no-op and no handlers register.
- * Default false; GrowthBook 5-min refresh.
+ * Overall channels on/off. Checked before any per-server gating — when
+ * false, --channels is a no-op and no handlers register. True when either
+ * the user has set channelsEnabled: true locally (isChannelsEnabledLocally)
+ * or the tengu_harbor GrowthBook flag is on. Default false.
  */
 export function isChannelsEnabled(): boolean {
-  return getFeatureValue_CACHED_MAY_BE_STALE('tengu_harbor', false)
+  return (
+    isChannelsEnabledLocally() ||
+    getFeatureValue_CACHED_MAY_BE_STALE('tengu_harbor', false)
+  )
 }
 
 /**
@@ -72,5 +78,33 @@ export function isChannelAllowlisted(
   if (!marketplace) return false
   return getChannelAllowlist().some(
     e => e.plugin === name && e.marketplace === marketplace,
+  )
+}
+
+/**
+ * Local opt-in for individual (non-managed) users — settings.json
+ * `channelsEnabled: true` in user/project/local scope. Lets OpenClaude
+ * users turn Channels on directly instead of depending on the
+ * Anthropic-only tengu_harbor GrowthBook flag or a claude.ai account.
+ * Managed (Team/Enterprise) accounts are excluded — those must go
+ * through policySettings so org admins keep the trust decision (see
+ * gateChannelServer's policy gate in channelNotification.ts).
+ */
+export function isChannelsEnabledLocally(): boolean {
+  const sub = getSubscriptionType()
+  if (sub === 'team' || sub === 'enterprise') return false
+  // Explicit managed veto: an org can be centrally managed (policySettings
+  // present) without team/enterprise subscription typing — e.g. Bedrock,
+  // Vertex, Foundry, or API-key deployments, where getSubscriptionType()
+  // returns null. If org policy explicitly does not enable channels, that
+  // must block the local bypass too, regardless of how this account
+  // authenticates.
+  if (getSettingsForSource('policySettings')?.channelsEnabled === false) {
+    return false
+  }
+  return (
+    getSettingsForSource('localSettings')?.channelsEnabled === true ||
+    getSettingsForSource('projectSettings')?.channelsEnabled === true ||
+    getSettingsForSource('userSettings')?.channelsEnabled === true
   )
 }

@@ -47,11 +47,19 @@ describe('OpenClaude paths', () => {
     delete process.env.CLAUDE_CONFIG_DIR
     const { resolveClaudeConfigHomeDir } = await importFreshEnvUtils()
 
-    expect(
-      resolveClaudeConfigHomeDir({
-        homeDir: homedir(),
-      }),
-    ).toBe(join(homedir(), '.openclaude'))
+    const tempHome = mkdtempSync(join(tmpdir(), 'openclaude-paths-test-'))
+    try {
+      // An existing ~/.openclaude is what keeps an install on .openclaude;
+      // without it the clean-install default (level 4) selects ~/.claude.
+      mkdirSync(join(tempHome, '.openclaude'), { recursive: true })
+      expect(
+        resolveClaudeConfigHomeDir({
+          homeDir: tempHome,
+        }),
+      ).toBe(join(tempHome, '.openclaude'))
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true })
+    }
   })
 
   test('hard-cuts user config home to ~/.openclaude by default', async () => {
@@ -60,11 +68,18 @@ describe('OpenClaude paths', () => {
     delete process.env.CLAUDE_CONFIG_DIR
     const { resolveClaudeConfigHomeDir } = await importFreshEnvUtils()
 
-    expect(
-      resolveClaudeConfigHomeDir({
-        homeDir: homedir(),
-      }),
-    ).toBe(join(homedir(), '.openclaude'))
+    const tempHome = mkdtempSync(join(tmpdir(), 'openclaude-paths-test-'))
+    try {
+      mkdirSync(join(tempHome, '.openclaude'), { recursive: true })
+      mkdirSync(join(tempHome, '.claude'), { recursive: true })
+      expect(
+        resolveClaudeConfigHomeDir({
+          homeDir: tempHome,
+        }),
+      ).toBe(join(tempHome, '.openclaude'))
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true })
+    }
   })
 
   test('does not migrate legacy .claude config into .openclaude', async () => {
@@ -335,6 +350,27 @@ describe('OpenClaude paths', () => {
 
       expect(getSettingsFilePathForSource('projectSettings')).toBe(
         join(tempProj, '.openclaude/settings.json'),
+      )
+    } finally {
+      rmSync(tempProj, { recursive: true, force: true })
+    }
+  })
+
+  test('getSettingsFilePathForSource prefers .claude for localSettings when project already uses .claude', async () => {
+    await acquireEnvMutex()
+    const tempProj = mkdtempSync(join(tmpdir(), 'openclaude-project-claude-test-'))
+    try {
+      mock.module('../bootstrap/state.js', () => ({
+        getOriginalCwd: () => tempProj,
+      }))
+
+      mkdirSync(join(tempProj, '.claude'), { recursive: true })
+      writeFileSync(join(tempProj, '.claude/settings.json'), '{}')
+
+      const { getSettingsFilePathForSource } = await importFreshSettings()
+
+      expect(getSettingsFilePathForSource('localSettings')).toBe(
+        join(tempProj, '.claude/settings.local.json'),
       )
     } finally {
       rmSync(tempProj, { recursive: true, force: true })

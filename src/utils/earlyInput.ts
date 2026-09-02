@@ -11,6 +11,7 @@
  * 3. stopCapturingEarlyInput() is called automatically when input is consumed
  */
 
+import { hasPrintFlag } from './printFlag.js'
 import { lastGrapheme } from './intl.js'
 
 // Buffer for early input characters
@@ -33,8 +34,7 @@ export function startCapturingEarlyInput(): void {
   if (
     !process.stdin.isTTY ||
     isCapturing ||
-    process.argv.includes('-p') ||
-    process.argv.includes('--print')
+    hasPrintFlag(process.argv)
   ) {
     return
   }
@@ -53,7 +53,7 @@ export function startCapturingEarlyInput(): void {
       let chunk = process.stdin.read()
       while (chunk !== null) {
         if (typeof chunk === 'string') {
-          processChunk(chunk)
+          processEarlyInputChunk(chunk)
         }
         chunk = process.stdin.read()
       }
@@ -67,9 +67,12 @@ export function startCapturingEarlyInput(): void {
 }
 
 /**
- * Process a chunk of input data
+ * Process a chunk of input data.
+ *
+ * Exported for testing: the escape-sequence filtering below is the only thing
+ * standing between raw terminal control bytes and the pre-filled prompt.
  */
-function processChunk(str: string): void {
+export function processEarlyInputChunk(str: string): void {
   let i = 0
   while (i < str.length) {
     const char = str[i]!
@@ -105,7 +108,16 @@ function processChunk(str: string): void {
     // All escape sequences start with ESC (0x1B) and end with a byte in 0x40-0x7E
     if (code === 27) {
       i++ // Skip the ESC character
-      // Skip until the terminating byte (@ to ~) or end of string
+      // Skip the introducer before scanning for the final byte. Both CSI '['
+      // (0x5B) and SS3 'O' (0x4F) sit inside the 0x40-0x7E final-byte range,
+      // so treating them as terminators ended the sequence one byte early and
+      // leaked the real final byte into the buffer as text — an alt-tab left
+      // "OI" in the prompt (CSI I / CSI O focus events), arrows left "A".
+      const introducer = str.charCodeAt(i)
+      if (introducer === 0x5b || introducer === 0x4f) {
+        i++
+      }
+      // Skip parameter/intermediate bytes until the terminating byte (@ to ~)
       while (
         i < str.length &&
         !(str.charCodeAt(i) >= 64 && str.charCodeAt(i) <= 126)

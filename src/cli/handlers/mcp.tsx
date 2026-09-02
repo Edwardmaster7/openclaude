@@ -172,6 +172,24 @@ export async function mcpServeHandler({
   }
 }
 
+// mcp serve-webhook-channel — launches the bundled reference webhook
+// channel MCP server (src/mcp-servers/webhook-channel/).
+export async function mcpServeWebhookChannelHandler({
+  port,
+  token,
+}: {
+  port?: string;
+  token?: string;
+}): Promise<void> {
+  const {
+    runWebhookChannelServer
+  } = await import('../../mcp-servers/webhook-channel/cli.js');
+  const argv: string[] = [];
+  if (port) argv.push('--port', port);
+  if (token) argv.push('--token', token);
+  await runWebhookChannelServer(argv);
+}
+
 // mcp remove (lines 4545–4635)
 export async function mcpRemoveHandler(name: string, options: {
   scope?: string;

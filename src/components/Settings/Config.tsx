@@ -11,6 +11,7 @@ import { type GlobalConfig, saveGlobalConfig, getCurrentProjectConfig, type Outp
 import { normalizeApiKeyForConfig } from '../../utils/authPortable.js';
 import { getGlobalConfig, getAutoUpdaterDisabledReason, formatAutoUpdaterDisabledReason, getRemoteControlAtStartup } from '../../utils/config.js';
 import { normalizeCompactTailTurns } from '../../utils/relevancePruning.js';
+import { normalizeReplMaxTurns, REPL_MAX_TURNS_OPTIONS } from '../../utils/replMaxTurns.js';
 import chalk from 'chalk';
 import { getModeColor, permissionModeTitle, permissionModeFromString, toExternalPermissionMode, isExternalPermissionMode, PERMISSION_MODES, type ExternalPermissionMode, type PermissionMode } from '../../utils/permissions/PermissionMode.js';
 import { getAutoModeEnabledState, hasAutoModeOptInAnySource, transitionPlanAutoMode } from '../../utils/permissions/permissionSetup.js';
@@ -28,6 +29,7 @@ import { Dialog } from '../design-system/Dialog.js';
 import { Select } from '../CustomSelect/index.js';
 import { OutputStylePicker } from '../OutputStylePicker.js';
 import { LanguagePicker } from '../LanguagePicker.js';
+import { ConfigHomeMenu, describeActiveConfigHome, preserveConfigHomeOnRevert } from './ConfigHomeMenu.js';
 import { getExternalClaudeMdIncludes, getMemoryFiles, hasExternalClaudeMdIncludes, type MemoryFileInfo } from 'src/utils/claudemd.js';
 import { KeyboardShortcutHint } from '../design-system/KeyboardShortcutHint.js';
 import { ConfigurableShortcutHint } from '../ConfigurableShortcutHint.js';
@@ -83,7 +85,7 @@ type Setting = (SettingBase & {
   onChange(value: string): void;
   type: 'managedEnum';
 });
-type SubMenu = 'Theme' | 'Model' | 'TeammateModel' | 'CompactModel' | 'ExternalIncludes' | 'OutputStyle' | 'ChannelDowngrade' | 'Language' | 'EnableAutoUpdates';
+type SubMenu = 'Theme' | 'Model' | 'TeammateModel' | 'CompactModel' | 'ExternalIncludes' | 'OutputStyle' | 'ChannelDowngrade' | 'Language' | 'EnableAutoUpdates' | 'ConfigHome';
 export function Config({
   onClose,
   context,
@@ -333,6 +335,29 @@ export function Config({
       });
       logEvent('tengu_compact_tail_turns_changed', {
         value: compactTailTurnsValue as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
+      });
+    }
+  }, {
+    id: 'replMaxTurns',
+    label: 'Max turns (interactive)',
+    // Display/persist the saved preference (normalized). Effective runtime cap
+    // may still be overridden by CLI `--max-turns` or OPENCLAUDE_MAX_TURNS.
+    value: String(normalizeReplMaxTurns(globalConfig.replMaxTurns)),
+    // Include a hand-edited config value so it round-trips through the picker.
+    options: [...new Set([...REPL_MAX_TURNS_OPTIONS.map(String), String(normalizeReplMaxTurns(globalConfig.replMaxTurns))])],
+    type: 'enum' as const,
+    onChange(replMaxTurnsValue: string) {
+      const replMaxTurns = normalizeReplMaxTurns(replMaxTurnsValue);
+      saveGlobalConfig(current => ({
+        ...current,
+        replMaxTurns
+      }));
+      setGlobalConfig({
+        ...getGlobalConfig(),
+        replMaxTurns
+      });
+      logEvent('tengu_repl_max_turns_changed', {
+        value: replMaxTurnsValue as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
       });
     }
   }, {
@@ -1008,6 +1033,14 @@ export function Config({
     type: 'managedEnum' as const,
     onChange: () => {} // handled by LanguagePicker submenu
   }, {
+    id: 'configHome',
+    label: 'Conversation & config folder',
+    value: describeActiveConfigHome().path.endsWith('.claude')
+      ? '~/.claude (shared with Claude Code)'
+      : '~/.openclaude',
+    type: 'managedEnum' as const,
+    onChange: () => {} // handled by the ConfigHome submenu
+  }, {
     id: 'editorMode',
     label: 'Editor mode',
     // Convert 'emacs' to 'normal' for backward compatibility
@@ -1050,27 +1083,6 @@ export function Config({
       });
       logEvent('tengu_tool_failure_loop_threshold_changed', {
         threshold
-      });
-    }
-  }, {
-    id: 'replMaxTurns',
-    label: 'Max turns in REPL (CLI)',
-    value: (globalConfig.replMaxTurns ?? 50).toString(),
-    options: ['10', '20', '50', '100', '200', '500'],
-    type: 'enum' as const,
-    onChange(val: string) {
-      const parsed = parseInt(val, 10);
-      const limit = isNaN(parsed) ? undefined : parsed;
-      saveGlobalConfig(current => {
-        if (current.replMaxTurns === limit) return current;
-        return {
-          ...current,
-          replMaxTurns: limit
-        };
-      });
-      setGlobalConfig({
-        ...getGlobalConfig(),
-        replMaxTurns: limit
       });
     }
   }, {
@@ -1456,6 +1468,9 @@ export function Config({
     if (globalConfig.compactTailTurns !== initialConfig.current.compactTailTurns) {
       formattedChanges.push(`Set compaction recent messages kept to ${normalizeCompactTailTurns(globalConfig.compactTailTurns)}`);
     }
+    if (globalConfig.replMaxTurns !== initialConfig.current.replMaxTurns) {
+      formattedChanges.push(`Set interactive max turns to ${normalizeReplMaxTurns(globalConfig.replMaxTurns)}`);
+    }
     if (globalConfig.toolHistoryCompressionEnabled !== initialConfig.current.toolHistoryCompressionEnabled) {
       formattedChanges.push(`${globalConfig.toolHistoryCompressionEnabled ? 'Enabled' : 'Disabled'} tool history compression`);
     }
@@ -1490,9 +1505,6 @@ export function Config({
     if (settingsData?.autoUpdatesChannel !== initialSettingsData.current?.autoUpdatesChannel) {
       formattedChanges.push(`Set auto-update channel to ${chalk.bold(settingsData?.autoUpdatesChannel ?? 'latest')}`);
     }
-    if (globalConfig.replMaxTurns !== initialConfig.current.replMaxTurns) {
-      formattedChanges.push(`Set max turns in REPL (CLI) to ${chalk.bold(globalConfig.replMaxTurns ?? '50')}`);
-    }
     if (globalConfig.forkMaxTurns !== initialConfig.current.forkMaxTurns) {
       formattedChanges.push(`Set max turns in background agents to ${chalk.bold(globalConfig.forkMaxTurns ?? '200')}`);
     }
@@ -1518,7 +1530,11 @@ export function Config({
     // Global config: full overwrite from snapshot. saveGlobalConfig skips if
     // the returned ref equals current (test mode checks ref; prod writes to
     // disk but content is identical).
-    saveGlobalConfig(() => initialConfig.current);
+    // configHome is deliberately carried over from the live config instead of
+    // being restored from the snapshot: picking a folder runs an irreversible
+    // migration copy, so un-setting it here would leave the files copied and
+    // the app still reading the old directory.
+    saveGlobalConfig(current => preserveConfigHomeOnRevert(initialConfig.current, current));
     // Context collapse: the toggle's onChange calls initContextCollapse() to
     // refresh the module-level enabled/armed cache. The global config restore
     // above rewrites the key on disk but doesn't touch that cache, so re-init
@@ -1642,7 +1658,7 @@ export function Config({
       }
       return;
     }
-    if (setting_0.id === 'theme' || setting_0.id === 'model' || setting_0.id === 'compactModel' || setting_0.id === 'teammateDefaultModel' || setting_0.id === 'showExternalIncludesDialog' || setting_0.id === 'outputStyle' || setting_0.id === 'language') {
+    if (setting_0.id === 'theme' || setting_0.id === 'model' || setting_0.id === 'compactModel' || setting_0.id === 'teammateDefaultModel' || setting_0.id === 'showExternalIncludesDialog' || setting_0.id === 'outputStyle' || setting_0.id === 'language' || setting_0.id === 'configHome') {
       // managedEnum items open a submenu — isDirty is set by the submenu's
       // completion callback, not here (submenu may be cancelled).
       switch (setting_0.id) {
@@ -1672,6 +1688,10 @@ export function Config({
           return;
         case 'language':
           setShowSubmenu('Language');
+          setTabsHidden(true);
+          return;
+        case 'configHome':
+          setShowSubmenu('ConfigHome');
           setTabsHidden(true);
           return;
       }
@@ -1957,6 +1977,33 @@ export function Config({
         void logEvent('tengu_language_changed', {
           language: (language ?? 'default') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
           source: 'config_panel' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
+        });
+      }} onCancel={() => {
+        setShowSubmenu(null);
+        setTabsHidden(false);
+      }} />
+          <Text dimColor>
+            <Byline>
+              <KeyboardShortcutHint shortcut="Enter" action="confirm" />
+              <ConfigurableShortcutHint action="confirm:no" context="Settings" fallback="Esc" description="cancel" />
+            </Byline>
+          </Text>
+        </> : showSubmenu === 'ConfigHome' ? <>
+          <ConfigHomeMenu onComplete={(mode, migrated) => {
+        isDirty.current = true;
+        saveGlobalConfig(current => ({
+          ...current,
+          configHome: mode
+        }));
+        setGlobalConfig({
+          ...getGlobalConfig(),
+          configHome: mode
+        });
+        setShowSubmenu(null);
+        setTabsHidden(false);
+        void logEvent('tengu_config_home_changed', {
+          mode: mode as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+          migrated: String(migrated) as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
         });
       }} onCancel={() => {
         setShowSubmenu(null);

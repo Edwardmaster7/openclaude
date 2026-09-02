@@ -10,10 +10,12 @@
  * The model sees where the message came from and decides which tool to reply
  * with (the channel's MCP tool, SendUserMessage, or both).
  *
- * feature('KAIROS') || feature('KAIROS_CHANNELS'). Runtime gate tengu_harbor.
- * Requires claude.ai OAuth auth — API key users are blocked until
- * console gets a channelsEnabled admin surface. Teams/Enterprise orgs
- * must explicitly opt in via channelsEnabled: true in managed settings.
+ * feature('KAIROS') || feature('KAIROS_CHANNELS'). Runtime gate tengu_harbor,
+ * or a local channelsEnabled: true setting (see isChannelsEnabledLocally).
+ * Requires claude.ai OAuth auth UNLESS the user has set channelsEnabled: true
+ * locally — that explicit opt-in substitutes for OAuth for individual
+ * accounts. Teams/Enterprise orgs must explicitly opt in via
+ * channelsEnabled: true in managed settings, and always require OAuth.
  */
 
 import type { ServerCapabilities } from '@modelcontextprotocol/sdk/types.js'
@@ -32,6 +34,7 @@ import {
   type ChannelAllowlistEntry,
   getChannelAllowlist,
   isChannelsEnabled,
+  isChannelsEnabledLocally,
 } from './channelAllowlist.js'
 
 export const ChannelMessageNotificationSchema = lazySchema(() =>
@@ -251,14 +254,17 @@ export function gateChannelServer(
     }
   }
 
-  // OAuth-only. API key users (console) are blocked — there's no
-  // channelsEnabled admin surface in console yet, so the policy opt-in
-  // flow doesn't exist for them. Drop this when console parity lands.
-  if (!getClaudeAIOAuthTokens()?.accessToken) {
+  // API-key / non-Anthropic users skip this entirely once they've
+  // explicitly opted in via channelsEnabled: true locally — that setting
+  // IS the informed-consent signal claude.ai OAuth otherwise provides.
+  if (
+    !isChannelsEnabledLocally() &&
+    !getClaudeAIOAuthTokens()?.accessToken
+  ) {
     return {
       action: 'skip',
       kind: 'auth',
-      reason: 'channels requires claude.ai authentication (run /login)',
+      reason: 'channels requires claude.ai authentication (run /login), or set channelsEnabled: true in your settings.json',
     }
   }
 

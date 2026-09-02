@@ -59,6 +59,16 @@ describe('Claude Config Resolution & Merging (.claude and .openclaude)', () => {
     expect(resolved).toBe(claudeDir)
   })
 
+  test('resolveClaudeConfigHomeDir defaults a clean install to ~/.claude', () => {
+    const fakeHome = join(tempDir, 'clean_home')
+    mkdirSync(fakeHome, { recursive: true })
+    // Neither ~/.openclaude nor ~/.claude exists: a brand-new install
+    // shares Claude Code's directory.
+    expect(resolveClaudeConfigHomeDir({ homeDir: fakeHome })).toBe(
+      join(fakeHome, '.claude'),
+    )
+  })
+
   test('loadMarkdownFilesForSubdir discovers commands from both .openclaude/commands and .claude/commands', async () => {
     const projDir = join(tempDir, 'project')
     const openClaudeCmdDir = join(projDir, '.openclaude', 'commands')
