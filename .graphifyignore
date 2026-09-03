@@ -1,0 +1,32 @@
+# Agent/harness metadata — not production code
+.claude/
+.openclaude/
+.antigravitycli/
+docs/ai/plans/
+docs/ai/chats/
+
+# Dependencies, build artifacts, caches
+node_modules/
+dist/
+web/dist/
+coverage/
+*.tsbuildinfo
+web/*.tsbuildinfo
+.trunk/
+graphify-out/
+
+# VCS / worktrees
+.git/
+.worktrees/
+
+# Large generated/data files
+observer_debug.json
+bun.lock
+package-lock.json
+
+# Reproducibly hangs the graphify AST extractor (bisected 2026-09-03 — not size-
+# or content-related, likely the multi-line `typeof import('./x.js').Y` type-only
+# imports + `;({ x } = await import(...))` destructuring pattern confusing the
+# import resolver). See .claude/memory/team/harness-setup-decisions.md.
+src/constants/promptIdentity.test.ts
+src/entrypoints/cli.tsx

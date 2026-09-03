@@ -11,9 +11,7 @@ auth.json
 .openclaude/
 reports/
 GEMINI.md
-CLAUDE.md
 package-lock.json
-/.claude
 # Local git worktrees created by agent/developer tooling.
 /.worktrees/
 # Trunk (linter/formatter) local cache directory.
