@@ -83,7 +83,7 @@ export function CoordinatorTaskPanel(): React.ReactNode {
 export function useCoordinatorTaskCount() {
   const tasks = useAppState(_temp);
   let t0;
-  t0 = 0;
+  t0 = getVisibleAgentTasks(tasks).length;
   return t0;
 }
 function _temp(s) {
