@@ -47,7 +47,6 @@ import type { ToolPermissionContext } from '../../Tool.js';
 import { getRunningTeammatesSorted } from '../../tasks/InProcessTeammateTask/InProcessTeammateTask.js';
 import type { InProcessTeammateTaskState } from '../../tasks/InProcessTeammateTask/types.js';
 import { type LocalAgentTaskState } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
-import { isBackgroundTask } from '../../tasks/types.js';
 import { AGENT_COLOR_TO_THEME_COLOR, AGENT_COLORS, type AgentColorName } from '../../tools/AgentTool/agentColorManager.js';
 import type { AgentDefinition } from '../../tools/AgentTool/loadAgentsDir.js';
 import type { Message } from '../../types/message.js';
@@ -109,7 +108,7 @@ import { QuickOpenDialog } from '../QuickOpenDialog.js';
 import TextInput from '../TextInput.js';
 import { ThinkingToggle } from '../ThinkingToggle.js';
 import { BackgroundTasksDialog } from '../tasks/BackgroundTasksDialog.js';
-import { countVisibleBackgroundTasks, shouldHideTasksFooter } from '../tasks/taskStatusUtils.js';
+import { countVisibleBackgroundTasks, hasNonPanelBackgroundTask, shouldHideTasksFooter } from '../tasks/taskStatusUtils.js';
 import { TeamsDialog } from '../teams/TeamsDialog.js';
 import VimTextInput from '../VimTextInput.js';
 import { applyHistorySearchActiveState } from './footerVisibility.js';
@@ -409,12 +408,16 @@ function PromptInput({
   // exist. When only local_agent tasks are running (coordinator/fork mode), the
   // pill is absent, so the -1 sentinel would leave nothing visually selected.
   // In that case, skip -1 and treat 0 as the minimum selectable index.
-  const hasBgTaskPill = useMemo(() => Object.values(tasks).some(t => isBackgroundTask(t)), [tasks]);
+  const hasBgTaskPill = useMemo(() => hasNonPanelBackgroundTask(tasks), [tasks]);
   const minCoordinatorIndex = hasBgTaskPill ? -1 : 0;
-  // Clamp index when tasks complete and the list shrinks beneath the cursor
+  // Clamp index when tasks complete and the list shrinks beneath the cursor.
+  // Index 0 is "main"; indices 1..coordinatorTaskCount select agent rows
+  // (getVisibleAgentTasks(tasks)[index - 1], per footer:openSelected/close
+  // below) — coordinatorTaskCount itself is a valid index (the last agent),
+  // so the upper bound here is inclusive.
   useEffect(() => {
-    if (coordinatorTaskIndex >= coordinatorTaskCount) {
-      setCoordinatorTaskIndex(Math.max(minCoordinatorIndex, coordinatorTaskCount - 1));
+    if (coordinatorTaskIndex > coordinatorTaskCount) {
+      setCoordinatorTaskIndex(Math.max(minCoordinatorIndex, coordinatorTaskCount));
     } else if (coordinatorTaskIndex < minCoordinatorIndex) {
       setCoordinatorTaskIndex(minCoordinatorIndex);
     }
@@ -1849,12 +1852,35 @@ function PromptInput({
   // selected — its useInput is inactive, so this is the only path.
   useKeybindings({
     'footer:up': () => {
+      // Step up through CoordinatorTaskPanel's own rows (main, then agents)
+      // before falling back to footer-pill navigation. Only relevant once
+      // the index is past minCoordinatorIndex — at the top, fall through to
+      // navigateFooter's existing exitAtStart behavior (deselect).
+      if (tasksSelected && !isTeammateMode && coordinatorTaskIndex > minCoordinatorIndex) {
+        setCoordinatorTaskIndex(i => Math.max(minCoordinatorIndex, i - 1));
+        return;
+      }
       navigateFooter(-1, true);
     },
     'footer:down': () => {
       if (tasksSelected && !isTeammateMode) {
-        setShowBashesDialog(true);
-        selectFooterItem(null);
+        // Step down through CoordinatorTaskPanel's own rows (main, then
+        // agents) while there's another row below the current selection.
+        // coordinatorTaskCount itself is a valid index (the last agent —
+        // see the clamp-effect comment above), so the bound here is
+        // inclusive, matching footer:up's symmetric lower-bound check.
+        if (coordinatorTaskCount > 0 && coordinatorTaskIndex < coordinatorTaskCount) {
+          setCoordinatorTaskIndex(i => Math.min(coordinatorTaskCount, i + 1));
+          return;
+        }
+        // No agent rows to navigate (a non-agent background task, e.g. a
+        // running shell, is what selected the pill) — fall back to the
+        // legacy /tasks dialog, the only way to interact with it.
+        if (coordinatorTaskCount === 0) {
+          setShowBashesDialog(true);
+          selectFooterItem(null);
+        }
+        // Already at the last agent row — stop, don't open /tasks.
         return;
       }
       navigateFooter(1);

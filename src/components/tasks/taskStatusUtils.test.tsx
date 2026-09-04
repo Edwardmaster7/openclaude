@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { TaskState } from '../../tasks/types.js'
 import {
   countVisibleBackgroundTasks,
+  hasNonPanelBackgroundTask,
   shouldHideTasksFooter,
 } from './taskStatusUtils.js'
 
@@ -57,5 +58,46 @@ describe('shouldHideTasksFooter', () => {
     }
 
     expect(shouldHideTasksFooter(tasks, true)).toBe(false)
+  })
+})
+
+function localAgentTask(status = 'running'): TaskState {
+  return {
+    id: `agent-${status}`,
+    type: 'local_agent',
+    agentType: 'general-purpose',
+    status,
+    isBackgrounded: true,
+  } as unknown as TaskState
+}
+
+describe('hasNonPanelBackgroundTask', () => {
+  test('is false when the only background tasks are local_agent (panel already shows them)', () => {
+    const tasks = {
+      agent: localAgentTask(),
+    }
+
+    expect(hasNonPanelBackgroundTask(tasks)).toBe(false)
+  })
+
+  test('is true when a non-agent background task exists alongside an agent', () => {
+    const tasks = {
+      agent: localAgentTask(),
+      shell: task('running'),
+    }
+
+    expect(hasNonPanelBackgroundTask(tasks)).toBe(true)
+  })
+
+  test('is true for a plain non-agent background task with no agents', () => {
+    const tasks = {
+      shell: task('running'),
+    }
+
+    expect(hasNonPanelBackgroundTask(tasks)).toBe(true)
+  })
+
+  test('is false when there are no background tasks at all', () => {
+    expect(hasNonPanelBackgroundTask({})).toBe(false)
   })
 })
