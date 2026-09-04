@@ -5457,6 +5457,7 @@ test('ProviderManager does not hijack a manual Codex profile when OAuth credenti
     mode: 'first-run',
     onDone,
   })
+  await Bun.sleep(200); console.error('DEBUG FRAME:', JSON.stringify(require('node:util').stripVTControlCharacters((mounted.getOutput().split('\x1Bc').pop() || ''))))
 
   await waitForFrameOutput(
     mounted.getOutput,
