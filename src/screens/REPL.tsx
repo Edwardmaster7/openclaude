@@ -4211,8 +4211,30 @@ export function REPL({
     // accumulating after #20174/#20175, all traced to this dep.
     mainLoopModel, pastedContents, ideSelection, setUserInputOnProcessing, setAbortController, addNotification, onQuery, stashedPrompt, setStashedPrompt, setAppState, onBeforeQuery, canUseTool, remoteSession, setMessages, awaitPendingHooks, repinScroll, takeInterruptionCorrectionReminder, restoreInterruptionCorrectionReminder]);
 
+  // Mitigates a reported double-submit while steering a subagent: the same
+  // text landed as two separate turns in quick succession. Root cause isn't
+  // confirmed yet (ruled out: chat:submit chord collision — not bound to
+  // plain Enter by default; queued_command replay — shouldShowUserMessage
+  // hides isMeta messages; prompt-suggestion auto-accept — already excluded
+  // by !viewingAgentTaskId). This guard drops an identical (task, text)
+  // resubmission within 800ms as a safety net pending a live repro.
+  const lastAgentSubmitRef = useRef<{
+    taskId: string;
+    input: string;
+    at: number;
+  } | null>(null);
   // Callback for when user submits input while viewing a teammate's transcript
   const onAgentSubmit = useCallback(async (input: string, task: InProcessTeammateTaskState | LocalAgentTaskState, helpers: PromptInputHelpers) => {
+    const now = Date.now();
+    const last = lastAgentSubmitRef.current;
+    if (last && last.taskId === task.id && last.input === input && now - last.at < 800) {
+      logForDebugging(`[onAgentSubmit] dropped duplicate resubmission within ${now - last.at}ms for task ${task.id}`);
+      setInputValue('');
+      helpers.setCursorOffset(0);
+      helpers.clearBuffer();
+      return;
+    }
+    lastAgentSubmitRef.current = { taskId: task.id, input, at: now };
     if (isLocalAgentTask(task)) {
       // A finished subagent's steering box is read-only — typing here used to
       // silently call resumeAgentBackground, re-running it from its saved
