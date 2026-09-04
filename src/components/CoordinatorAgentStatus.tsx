@@ -4,7 +4,7 @@ import { c as _c } from "react-compiler-runtime";
  *
  * Renders below the prompt input footer whenever local_agent tasks exist.
  * Visibility is driven by evictAfter: undefined (running/retained) shows
- * always; a timestamp shows until passed. Enter to view/steer, x to dismiss.
+ * always; a timestamp shows until passed. Enter to view/steer, ctrl+c to dismiss.
  */
 
 import figures from 'figures';
@@ -18,7 +18,7 @@ import { enterTeammateView, exitTeammateView } from '../state/teammateViewHelper
 import { isPanelAgentTask, type LocalAgentTaskState } from '../tasks/LocalAgentTask/LocalAgentTask.js';
 import { formatDuration, formatNumber } from '../utils/format.js';
 import { evictTerminalTask } from '../utils/task/framework.js';
-import { isTerminalStatus } from './tasks/taskStatusUtils.js';
+import { getTaskStatusColor, isTerminalStatus } from './tasks/taskStatusUtils.js';
 
 /**
  * Which panel-managed tasks currently have a visible row.
@@ -83,7 +83,7 @@ export function CoordinatorTaskPanel(): React.ReactNode {
 export function useCoordinatorTaskCount() {
   const tasks = useAppState(_temp);
   let t0;
-  t0 = 0;
+  t0 = getVisibleAgentTasks(tasks).length;
   return t0;
 }
 function _temp(s) {
@@ -141,7 +141,7 @@ type AgentLineProps = {
   onClick?: () => void;
 };
 function AgentLine(t0) {
-  const $ = _c(32);
+  const $ = _c(36);
   const {
     task,
     name,
@@ -180,14 +180,34 @@ function AgentLine(t0) {
   const tokenText = t2;
   const queuedCount = task.pendingMessages.length;
   const queuedText = queuedCount > 0 ? ` · ${queuedCount} queued` : "";
-  const displayDescription = task.progress?.summary || task.description;
+  // Collapse to a single line: this row's layout puts the ❯ arrow before
+  // displayDescription and the elapsed/tokens/hint suffix after it, all on
+  // one physical line — an embedded newline (e.g. a markdown-formatted
+  // summary that ignored its "3-5 words" prompt) makes wrapText's
+  // truncate-end pass the newline straight through, and Ink's <Text> then
+  // renders it as a real line break, splitting the arrow from the suffix.
+  const displayDescription = (task.progress?.summary || task.description).replace(/\s+/g, ' ').trim();
   const highlighted = isSelected || hover;
   const prefix = highlighted ? figures.pointer + " " : "  ";
   const bullet = isViewed ? BLACK_CIRCLE : figures.circle;
+  // Color the bullet by terminal status (success/error/warning) once the
+  // agent finishes — matches Claude Code's colored status dot. While
+  // running, leave it uncolored (theme default via the dimColor below).
+  const statusColor = isTerminalStatus(task.status) ? getTaskStatusColor(task.status) : undefined;
+  let t1_5;
+  if ($[32] !== bullet || $[33] !== statusColor) {
+    t1_5 = <Text color={statusColor}>{bullet}</Text>;
+    $[32] = bullet;
+    $[33] = statusColor;
+    $[34] = t1_5;
+  } else {
+    t1_5 = $[34];
+  }
+  const coloredBullet = t1_5;
   const dim = !highlighted && !isViewed;
   const sep = isRunning ? PLAY_ICON : PAUSE_ICON;
   const namePart = name ? `${name}: ` : "";
-  const hintPart = isSelected && !isViewed ? ` · x to ${isRunning ? "stop" : "clear"}` : "";
+  const hintPart = isSelected && !isViewed ? ` · ctrl+c to ${isRunning ? "stop" : "clear"}` : "";
   const suffixPart = ` ${sep} ${elapsed}${tokenText}${queuedText}${hintPart}`;
   const availableForDesc = columns - stringWidth(prefix) - stringWidth(`${bullet} `) - stringWidth(namePart) - stringWidth(suffixPart);
   const t3 = Math.max(0, availableForDesc);
@@ -227,8 +247,8 @@ function AgentLine(t0) {
     t7 = $[14];
   }
   let t8;
-  if ($[15] !== bullet || $[16] !== dim || $[17] !== elapsed || $[18] !== isViewed || $[19] !== prefix || $[20] !== sep || $[21] !== t5 || $[22] !== t6 || $[23] !== t7 || $[24] !== tokenText || $[25] !== truncated) {
-    t8 = <Text dimColor={dim} bold={isViewed}>{prefix}{bullet}{" "}{t5}{truncated} {sep} {elapsed}{tokenText}{t6}{t7}</Text>;
+  if ($[15] !== bullet || $[16] !== dim || $[17] !== elapsed || $[18] !== isViewed || $[19] !== prefix || $[20] !== sep || $[21] !== t5 || $[22] !== t6 || $[23] !== t7 || $[24] !== tokenText || $[25] !== truncated || $[35] !== coloredBullet) {
+    t8 = <Text dimColor={dim} bold={isViewed}>{prefix}{coloredBullet}{" "}{t5}{truncated} {sep} {elapsed}{tokenText}{t6}{t7}</Text>;
     $[15] = bullet;
     $[16] = dim;
     $[17] = elapsed;
@@ -241,6 +261,7 @@ function AgentLine(t0) {
     $[24] = tokenText;
     $[25] = truncated;
     $[26] = t8;
+    $[35] = coloredBullet;
   } else {
     t8 = $[26];
   }

@@ -133,7 +133,16 @@ export function startAgentSummarization(
         }
         const textBlock = msg.message.content.find(b => b.type === 'text')
         if (textBlock?.type === 'text' && textBlock.text.trim()) {
-          const summaryText = textBlock.text.trim()
+          // The prompt asks for "3-5 words" but doesn't always get followed
+          // (the model can ignore it and return a full multi-paragraph
+          // report). Collapse to one line and cap the length so a
+          // disobedient response can't blow up the panel row's layout or
+          // bloat AgentProgress state — the UI's contract for this field is
+          // a short single-line status, not free-form text.
+          const summaryText = textBlock.text
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 80)
           logForDebugging(
             `[AgentSummary] Summary result for ${taskId}: ${summaryText}`,
           )

@@ -114,3 +114,21 @@ export function shouldHideTasksFooter(tasks: {
   }
   return hasVisibleTask;
 }
+
+/**
+ * True when at least one visible background task still needs the legacy
+ * pill (BackgroundTaskStatus) / footer-pill-first selection sentinel — i.e.
+ * a background task that is NOT a local_agent. local_agent tasks are fully
+ * represented by CoordinatorTaskPanel's own rows, so they don't need the
+ * pill and shouldn't force pill-first (-1 sentinel) selection.
+ */
+export function hasNonPanelBackgroundTask(tasks: {
+  [taskId: string]: TaskState;
+}): boolean {
+  for (const t of Object.values(tasks) as TaskState[]) {
+    if (isBackgroundTask(t) && !isPanelAgentTask(t)) {
+      return true;
+    }
+  }
+  return false;
+}

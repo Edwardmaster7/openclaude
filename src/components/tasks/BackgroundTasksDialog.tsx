@@ -32,6 +32,7 @@ import { Box, Text } from '../../ink.js';
 import { useKeybindings } from '../../keybindings/useKeybinding.js';
 import { useShortcutDisplay } from '../../keybindings/useShortcutDisplay.js';
 import { count } from '../../utils/array.js';
+import { getPublicModelDisplayName } from '../../utils/model/model.js';
 import { Byline } from '../design-system/Byline.js';
 import { Dialog } from '../design-system/Dialog.js';
 import { KeyboardShortcutHint } from '../design-system/KeyboardShortcutHint.js';
@@ -377,7 +378,12 @@ export function BackgroundTasksDialog({
       case 'local_bash':
         return <ShellDetailDialog shell={task_0} onDone={onDone} onKillShell={() => void killShellTask(task_0.id)} onBack={goBackToList} key={`shell-${task_0.id}`} />;
       case 'local_agent':
-        return <AsyncAgentDetailDialog agent={task_0} onDone={onDone} onKillAgent={() => void killAgentTask(task_0.id)} onBack={goBackToList} key={`agent-${task_0.id}`} />;
+        return <AsyncAgentDetailDialog agent={task_0} onDone={onDone} onKillAgent={() => void killAgentTask(task_0.id)} onBack={goBackToList} onForeground={task_0.status === 'running' ? () => {
+          enterTeammateView(task_0.id, setAppState);
+          onDone('Viewing agent', {
+            display: 'system'
+          });
+        } : undefined} key={`agent-${task_0.id}`} />;
       case 'remote_agent':
         return <RemoteSessionDetailDialog session={task_0} onDone={onDone} toolUseContext={toolUseContext} onBack={goBackToList} onKill={task_0.status !== 'running' ? undefined : task_0.isUltraplan ? () => void stopUltraplan(task_0.id, task_0.sessionId, setAppState) : () => void killRemoteAgentTask(task_0.id)} key={`session-${task_0.id}`} />;
       case 'in_process_teammate':
@@ -490,7 +496,7 @@ export function BackgroundTasksDialog({
       </Dialog>
     </Box>;
 }
-function toListItem(task: BackgroundTaskState): ListItem {
+export function toListItem(task: BackgroundTaskState): ListItem {
   switch (task.type) {
     case 'local_bash':
       return {
@@ -508,14 +514,16 @@ function toListItem(task: BackgroundTaskState): ListItem {
         status: task.status,
         task
       };
-    case 'local_agent':
+    case 'local_agent': {
+      const modelName = task.model ? getPublicModelDisplayName(task.model) : null;
       return {
         id: task.id,
         type: 'local_agent',
-        label: task.description,
+        label: modelName ? `${task.description} · ${modelName}` : task.description,
         status: task.status,
         task
       };
+    }
     case 'in_process_teammate':
       return {
         id: task.id,

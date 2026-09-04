@@ -21,14 +21,16 @@ type Props = {
   onDone: () => void;
   onKillAgent?: () => void;
   onBack?: () => void;
+  onForeground?: () => void;
 };
 export function AsyncAgentDetailDialog(t0) {
-  const $ = _c(54);
+  const $ = _c(56);
   const {
     agent,
     onDone,
     onKillAgent,
-    onBack
+    onBack,
+    onForeground
   } = t0;
   const [theme] = useTheme();
   let t1;
@@ -61,7 +63,7 @@ export function AsyncAgentDetailDialog(t0) {
   }
   useKeybindings(t2, t3);
   let t4;
-  if ($[4] !== agent.status || $[5] !== onBack || $[6] !== onDone || $[7] !== onKillAgent) {
+  if ($[4] !== agent.status || $[5] !== onBack || $[6] !== onDone || $[7] !== onKillAgent || $[54] !== onForeground) {
     t4 = e => {
       if (e.key === " ") {
         e.preventDefault();
@@ -71,9 +73,14 @@ export function AsyncAgentDetailDialog(t0) {
           e.preventDefault();
           onBack();
         } else {
-          if (e.key === "x" && agent.status === "running" && onKillAgent) {
+          if (e.key === "f" && onForeground) {
             e.preventDefault();
-            onKillAgent();
+            onForeground();
+          } else {
+            if (e.key === "x" && agent.status === "running" && onKillAgent) {
+              e.preventDefault();
+              onKillAgent();
+            }
           }
         }
       }
@@ -82,6 +89,7 @@ export function AsyncAgentDetailDialog(t0) {
     $[5] = onBack;
     $[6] = onDone;
     $[7] = onKillAgent;
+    $[54] = onForeground;
     $[8] = t4;
   } else {
     t4 = $[8];
@@ -156,11 +164,12 @@ export function AsyncAgentDetailDialog(t0) {
   }
   const subtitle = t13;
   let t14;
-  if ($[27] !== agent.status || $[28] !== onBack || $[29] !== onKillAgent) {
-    t14 = exitState => exitState.pending ? <Text>Press {exitState.keyName} again to exit</Text> : <Byline>{onBack && <KeyboardShortcutHint shortcut={"\u2190"} action="go back" />}<KeyboardShortcutHint shortcut="Esc/Enter/Space" action="close" />{agent.status === "running" && onKillAgent && <KeyboardShortcutHint shortcut="x" action="stop" />}</Byline>;
+  if ($[27] !== agent.status || $[28] !== onBack || $[29] !== onKillAgent || $[55] !== onForeground) {
+    t14 = exitState => exitState.pending ? <Text>Press {exitState.keyName} again to exit</Text> : <Byline>{onBack && <KeyboardShortcutHint shortcut={"\u2190"} action="go back" />}<KeyboardShortcutHint shortcut="Esc/Enter/Space" action="close" />{agent.status === "running" && onKillAgent && <KeyboardShortcutHint shortcut="x" action="stop" />}{agent.status === "running" && onForeground && <KeyboardShortcutHint shortcut="f" action="foreground" />}</Byline>;
     $[27] = agent.status;
     $[28] = onBack;
     $[29] = onKillAgent;
+    $[55] = onForeground;
     $[30] = t14;
   } else {
     t14 = $[30];

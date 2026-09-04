@@ -47,7 +47,6 @@ import type { ToolPermissionContext } from '../../Tool.js';
 import { getRunningTeammatesSorted } from '../../tasks/InProcessTeammateTask/InProcessTeammateTask.js';
 import type { InProcessTeammateTaskState } from '../../tasks/InProcessTeammateTask/types.js';
 import { type LocalAgentTaskState } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
-import { isBackgroundTask } from '../../tasks/types.js';
 import { AGENT_COLOR_TO_THEME_COLOR, AGENT_COLORS, type AgentColorName } from '../../tools/AgentTool/agentColorManager.js';
 import type { AgentDefinition } from '../../tools/AgentTool/loadAgentsDir.js';
 import type { Message } from '../../types/message.js';
@@ -99,7 +98,7 @@ import { findUltraplanTriggerPositions, findUltrareviewTriggerPositions } from '
 import { AutoModeOptInDialog } from '../AutoModeOptInDialog.js';
 import { BridgeDialog } from '../BridgeDialog.js';
 import { ConfigurableShortcutHint } from '../ConfigurableShortcutHint.js';
-import { getVisibleAgentTasks, useCoordinatorTaskCount } from '../CoordinatorAgentStatus.js';
+import { CoordinatorTaskPanel, getVisibleAgentTasks, useCoordinatorTaskCount } from '../CoordinatorAgentStatus.js';
 import { getFastIconString } from '../FastIcon.js';
 import { GlobalSearchDialog } from '../GlobalSearchDialog.js';
 import { HistorySearchDialog } from '../HistorySearchDialog.js';
@@ -109,7 +108,7 @@ import { QuickOpenDialog } from '../QuickOpenDialog.js';
 import TextInput from '../TextInput.js';
 import { ThinkingToggle } from '../ThinkingToggle.js';
 import { BackgroundTasksDialog } from '../tasks/BackgroundTasksDialog.js';
-import { countVisibleBackgroundTasks, shouldHideTasksFooter } from '../tasks/taskStatusUtils.js';
+import { countVisibleBackgroundTasks, hasNonPanelBackgroundTask, shouldHideTasksFooter } from '../tasks/taskStatusUtils.js';
 import { TeamsDialog } from '../teams/TeamsDialog.js';
 import VimTextInput from '../VimTextInput.js';
 import { applyHistorySearchActiveState } from './footerVisibility.js';
@@ -409,12 +408,16 @@ function PromptInput({
   // exist. When only local_agent tasks are running (coordinator/fork mode), the
   // pill is absent, so the -1 sentinel would leave nothing visually selected.
   // In that case, skip -1 and treat 0 as the minimum selectable index.
-  const hasBgTaskPill = useMemo(() => Object.values(tasks).some(t => isBackgroundTask(t)), [tasks]);
+  const hasBgTaskPill = useMemo(() => hasNonPanelBackgroundTask(tasks), [tasks]);
   const minCoordinatorIndex = hasBgTaskPill ? -1 : 0;
-  // Clamp index when tasks complete and the list shrinks beneath the cursor
+  // Clamp index when tasks complete and the list shrinks beneath the cursor.
+  // Index 0 is "main"; indices 1..coordinatorTaskCount select agent rows
+  // (getVisibleAgentTasks(tasks)[index - 1], per footer:openSelected/close
+  // below) — coordinatorTaskCount itself is a valid index (the last agent),
+  // so the upper bound here is inclusive.
   useEffect(() => {
-    if (coordinatorTaskIndex >= coordinatorTaskCount) {
-      setCoordinatorTaskIndex(Math.max(minCoordinatorIndex, coordinatorTaskCount - 1));
+    if (coordinatorTaskIndex > coordinatorTaskCount) {
+      setCoordinatorTaskIndex(Math.max(minCoordinatorIndex, coordinatorTaskCount));
     } else if (coordinatorTaskIndex < minCoordinatorIndex) {
       setCoordinatorTaskIndex(minCoordinatorIndex);
     }
@@ -475,7 +478,14 @@ function PromptInput({
   // (down/right = forward, up/left = back). Selection lives in AppState so
   // pills rendered outside PromptInput (CompanionSprite) can read focus.
   const backgroundTaskCount = useMemo(() => countVisibleBackgroundTasks(tasks), [tasks]);
-  const tasksFooterVisible = backgroundTaskCount > 0 && !shouldHideTasksFooter(tasks, showSpinnerTree);
+  // countVisibleBackgroundTasks only counts running/pending tasks, but
+  // CoordinatorTaskPanel keeps a just-finished local_agent row visible for a
+  // grace period after completion (see PANEL_GRACE_MS / getVisibleAgentTasks).
+  // Without coordinatorTaskCount here, 'tasks' would drop out of footerItems
+  // during that grace window even though the panel still shows a row —
+  // stranding ↓ navigation on whatever other pill exists (or none), since
+  // handleHistoryDown can only enter items already in footerItems.
+  const tasksFooterVisible = (backgroundTaskCount > 0 || coordinatorTaskCount > 0) && !shouldHideTasksFooter(tasks, showSpinnerTree);
   const teamsFooterVisible = cachedTeams.length > 0;
   const footerItems = useMemo(() => [tasksFooterVisible && 'tasks', tmuxFooterVisible && 'tmux', bagelFooterVisible && 'bagel', teamsFooterVisible && 'teams', bridgeFooterVisible && 'bridge', companionFooterVisible && 'companion'].filter(Boolean) as FooterItem[], [tasksFooterVisible, tmuxFooterVisible, bagelFooterVisible, teamsFooterVisible, bridgeFooterVisible, companionFooterVisible]);
 
@@ -1849,12 +1859,35 @@ function PromptInput({
   // selected — its useInput is inactive, so this is the only path.
   useKeybindings({
     'footer:up': () => {
+      // Step up through CoordinatorTaskPanel's own rows (main, then agents)
+      // before falling back to footer-pill navigation. Only relevant once
+      // the index is past minCoordinatorIndex — at the top, fall through to
+      // navigateFooter's existing exitAtStart behavior (deselect).
+      if (tasksSelected && !isTeammateMode && coordinatorTaskIndex > minCoordinatorIndex) {
+        setCoordinatorTaskIndex(i => Math.max(minCoordinatorIndex, i - 1));
+        return;
+      }
       navigateFooter(-1, true);
     },
     'footer:down': () => {
       if (tasksSelected && !isTeammateMode) {
-        setShowBashesDialog(true);
-        selectFooterItem(null);
+        // Step down through CoordinatorTaskPanel's own rows (main, then
+        // agents) while there's another row below the current selection.
+        // coordinatorTaskCount itself is a valid index (the last agent —
+        // see the clamp-effect comment above), so the bound here is
+        // inclusive, matching footer:up's symmetric lower-bound check.
+        if (coordinatorTaskCount > 0 && coordinatorTaskIndex < coordinatorTaskCount) {
+          setCoordinatorTaskIndex(i => Math.min(coordinatorTaskCount, i + 1));
+          return;
+        }
+        // No agent rows to navigate (a non-agent background task, e.g. a
+        // running shell, is what selected the pill) — fall back to the
+        // legacy /tasks dialog, the only way to interact with it.
+        if (coordinatorTaskCount === 0) {
+          setShowBashesDialog(true);
+          selectFooterItem(null);
+        }
+        // Already at the last agent row — stop, don't open /tasks.
         return;
       }
       navigateFooter(1);
@@ -1927,20 +1960,16 @@ function PromptInput({
       if (tasksSelected && coordinatorTaskIndex >= 1) {
         const task = getVisibleAgentTasks(tasks)[coordinatorTaskIndex - 1];
         if (!task) return false;
-        // When the selected row IS the viewed agent, 'x' types into the
-        // steering input. Any other row — dismiss it.
-        if (viewSelectionMode === 'viewing-agent' && task.id === viewingAgentTaskId) {
-          onChange(input.slice(0, cursorOffset) + 'x' + input.slice(cursorOffset));
-          setCursorOffset(cursorOffset + 1);
-          return;
-        }
+        // ctrl+c isn't a printable character, so unlike the old 'x' binding
+        // there's no "typed into the steering input" case to preserve here —
+        // dismiss/stop the selected row whether or not it's being viewed.
         stopOrDismissAgent(task.id, setAppState);
         if (task.status !== 'running') {
           setCoordinatorTaskIndex(i => Math.max(minCoordinatorIndex, i - 1));
         }
         return;
       }
-      // Not handled — let 'x' fall through to type-to-exit
+      // Not handled — let ctrl+c fall through (e.g. to app:interrupt)
       return false;
     }
   }, {
@@ -2348,6 +2377,7 @@ function PromptInput({
           </Box>
         </Box>}
       <PromptInputFooter apiKeyStatus={apiKeyStatus} debug={debug} exitMessage={exitMessage} vimMode={isVimModeEnabled() ? vimMode : undefined} mode={mode} autoUpdaterResult={autoUpdaterResult} isAutoUpdating={isAutoUpdating} verbose={verbose} onAutoUpdaterResult={onAutoUpdaterResult} onChangeIsUpdating={setIsAutoUpdating} suggestions={suggestions} selectedSuggestion={selectedSuggestion} maxColumnWidth={maxColumnWidth} toolPermissionContext={effectiveToolPermissionContext} helpOpen={helpOpen} suppressHint={input.length > 0} isLoading={isLoading} tasksSelected={tasksSelected} teamsSelected={teamsSelected} bridgeSelected={bridgeSelected} tmuxSelected={tmuxSelected} teammateFooterIndex={teammateFooterIndex} ideSelection={ideSelection} mcpClients={mcpClients} isPasting={isPasting} isInputWrapped={isInputWrapped} messages={messages} isSearching={isSearchingHistory} historyQuery={historyQuery} setHistoryQuery={setHistoryQuery} historyFailedMatch={historyFailedMatch} onOpenTasksDialog={isFullscreenEnvEnabled() ? handleOpenTasksDialog : undefined} />
+      <CoordinatorTaskPanel />
       {isFullscreenEnvEnabled() ? null : autoModeOptInDialog}
       {isFullscreenEnvEnabled() ?
     // position=absolute takes zero layout height so the spinner

@@ -170,7 +170,6 @@ import { type IDESelection, useIdeSelection } from '../hooks/useIdeSelection.js'
 import { getTools, assembleToolPool } from '../tools.js';
 import type { AgentDefinition } from '../tools/AgentTool/loadAgentsDir.js';
 import { resolveAgentTools } from '../tools/AgentTool/agentToolUtils.js';
-import { resumeAgentBackground } from '../tools/AgentTool/resumeAgent.js';
 import { useMainLoopModel } from '../hooks/useMainLoopModel.js';
 import { useAppState, useSetAppState, useAppStateStore, type AppState } from '../state/AppState.js';
 import type { ContentBlockParam, ImageBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs';
@@ -4212,38 +4211,59 @@ export function REPL({
     // accumulating after #20174/#20175, all traced to this dep.
     mainLoopModel, pastedContents, ideSelection, setUserInputOnProcessing, setAbortController, addNotification, onQuery, stashedPrompt, setStashedPrompt, setAppState, onBeforeQuery, canUseTool, remoteSession, setMessages, awaitPendingHooks, repinScroll, takeInterruptionCorrectionReminder, restoreInterruptionCorrectionReminder]);
 
+  // Diagnostic instrumentation for a reported double-submit while steering a
+  // subagent: the same text landed as two separate turns in quick succession.
+  // Root cause isn't confirmed (ruled out: chat:submit chord collision — not
+  // bound to plain Enter by default; queued_command replay —
+  // shouldShowUserMessage hides isMeta messages; prompt-suggestion auto-accept
+  // — already excluded by !viewingAgentTaskId). This logs a near-identical
+  // resubmission instead of dropping it: a user re-sending the exact same
+  // text on purpose is a real, legitimate case, and silently discarding their
+  // input (as an earlier version of this guard did) is a worse bug — silent
+  // data loss — than the rare duplicate it would catch. If this fires again,
+  // the log line pins down the exact timing gap for a real fix.
+  const lastAgentSubmitRef = useRef<{
+    taskId: string;
+    input: string;
+    at: number;
+  } | null>(null);
   // Callback for when user submits input while viewing a teammate's transcript
   const onAgentSubmit = useCallback(async (input: string, task: InProcessTeammateTaskState | LocalAgentTaskState, helpers: PromptInputHelpers) => {
+    const now = Date.now();
+    const last = lastAgentSubmitRef.current;
+    if (last && last.taskId === task.id && last.input === input && now - last.at < 800) {
+      logForDebugging(`[onAgentSubmit] near-identical resubmission ${now - last.at}ms apart for task ${task.id} — delivering both rather than guessing which one to drop`);
+    }
+    lastAgentSubmitRef.current = { taskId: task.id, input, at: now };
     if (isLocalAgentTask(task)) {
+      // A finished subagent's steering box is read-only — typing here used to
+      // silently call resumeAgentBackground, re-running it from its saved
+      // transcript with a brand-new async lifecycle. That's a real feature
+      // (used deliberately by SendMessageTool), but firing it from a stray
+      // Enter in the panel is surprising and looks like the message vanished
+      // (no immediate feedback while the resume spins up). Block it here and
+      // leave the typed text in place instead of discarding it.
+      if (task.status !== 'running') {
+        addNotification({
+          key: `agent-finished-${task.id}`,
+          jsx: <Text color="warning">
+            This subagent has finished — go back to main to start a new one.
+          </Text>,
+          priority: 'low'
+        });
+        return;
+      }
       appendMessageToLocalAgent(task.id, createUserMessage({
         content: input
       }), setAppState);
-      if (task.status === 'running') {
-        queuePendingMessage(task.id, input, setAppState);
-      } else {
-        void resumeAgentBackground({
-          agentId: task.id,
-          prompt: input,
-          toolUseContext: getToolUseContext(messagesRef.current, [], new AbortController(), mainLoopModel),
-          canUseTool
-        }).catch(err => {
-          logForDebugging(`resumeAgentBackground failed: ${errorMessage(err)}`);
-          addNotification({
-            key: `resume-agent-failed-${task.id}`,
-            jsx: <Text color="error">
-              Failed to resume agent: {errorMessage(err)}
-            </Text>,
-            priority: 'low'
-          });
-        });
-      }
+      queuePendingMessage(task.id, input, setAppState);
     } else {
       injectUserMessageToTeammate(task.id, input, setAppState);
     }
     setInputValue('');
     helpers.setCursorOffset(0);
     helpers.clearBuffer();
-  }, [setAppState, setInputValue, getToolUseContext, canUseTool, mainLoopModel, addNotification]);
+  }, [setAppState, setInputValue, addNotification]);
 
   // Handlers for auto-run /issue or /good-claude (defined after onSubmit)
   const handleAutoRunIssue = useCallback(() => {
@@ -5206,7 +5226,12 @@ export function REPL({
         </Box>}
         {feature('WEB_BROWSER_TOOL') ? WebBrowserPanelModule && <WebBrowserPanelModule.WebBrowserPanel /> : null}
         <Box flexGrow={1} />
-        {showSpinner && <SpinnerWithVerb mode={streamMode} spinnerTip={spinnerTip} responseLengthRef={responseLengthRef} responseLength={reducedMotion ? reducedMotionResponseLength : undefined} overrideMessage={spinnerMessage} spinnerSuffix={stopHookSpinnerSuffix ?? activeToolSpinnerSuffix} verbose={verbose} loadingStartTimeRef={loadingStartTimeRef} totalPausedMsRef={totalPausedMsRef} pauseStartTimeRef={pauseStartTimeRef} overrideColor={spinnerColor} overrideShimmerColor={spinnerShimmerColor} hasActiveTools={inProgressToolUseIDs.size > 0} leaderIsIdle={!isLoading} />}
+        {/* !viewedAgentTask: this spinner reflects the LEADER's own loading
+            state. Every sibling in this block (CompletionFlash, BriefIdleStatus
+            below) already excludes itself while viewing an agent's transcript —
+            this one didn't, so the leader's "thinking" spinner leaked into the
+            viewed subagent's pane whenever the leader was busy in the background. */}
+        {showSpinner && !viewedAgentTask && <SpinnerWithVerb mode={streamMode} spinnerTip={spinnerTip} responseLengthRef={responseLengthRef} responseLength={reducedMotion ? reducedMotionResponseLength : undefined} overrideMessage={spinnerMessage} spinnerSuffix={stopHookSpinnerSuffix ?? activeToolSpinnerSuffix} verbose={verbose} loadingStartTimeRef={loadingStartTimeRef} totalPausedMsRef={totalPausedMsRef} pauseStartTimeRef={pauseStartTimeRef} overrideColor={spinnerColor} overrideShimmerColor={spinnerShimmerColor} hasActiveTools={inProgressToolUseIDs.size > 0} leaderIsIdle={!isLoading} />}
         {/* Permanently mounted: it observes the isLoading transition to flash
             `✓ Done` for ~1.5s. Suppressed wherever another element owns the
             row or the user's attention. */}

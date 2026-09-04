@@ -5,6 +5,7 @@ import type { BackgroundTaskState } from 'src/tasks/types.js';
 import type { DeepImmutable } from 'src/types/utils.js';
 import { truncate } from 'src/utils/format.js';
 import { toInkColor } from 'src/utils/ink.js';
+import { getPublicModelDisplayName } from 'src/utils/model/model.js';
 import { plural } from 'src/utils/stringUtils.js';
 import { DIAMOND_FILLED, DIAMOND_OPEN } from '../../constants/figures.js';
 import { RemoteSessionProgress } from './RemoteSessionProgress.js';
@@ -15,7 +16,7 @@ type Props = {
   maxActivityWidth?: number;
 };
 export function BackgroundTask(t0) {
-  const $ = _c(92);
+  const $ = _c(93);
   const {
     task,
     maxActivityWidth
@@ -135,11 +136,13 @@ export function BackgroundTask(t0) {
         } else {
           t4 = $[28];
         }
+        const modelName = task.model ? getPublicModelDisplayName(task.model) : null;
         let t5;
-        if ($[29] !== t1 || $[30] !== t4) {
-          t5 = <Text>{t1}{" "}{t4}</Text>;
+        if ($[29] !== t1 || $[30] !== t4 || $[92] !== modelName) {
+          t5 = <Text>{t1}{" "}{t4}{modelName ? ` · ${modelName}` : ""}</Text>;
           $[29] = t1;
           $[30] = t4;
+          $[92] = modelName;
           $[31] = t5;
         } else {
           t5 = $[31];
