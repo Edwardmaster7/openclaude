@@ -1,4 +1,10 @@
-# Changelog
+## [0.30.0](https://github.com/Gitlawb/openclaude/compare/v0.29.1...v0.30.0) (2026-09-04)
+
+### Bug Fixes
+
+* **cost:** remove artificial delay in session cost loading message
+* **stats:** improve scroll behavior and add tab switching in Models tab
+* **session:** update crash recovery prompt to use standard y/n format
 
 ## [0.29.1](https://github.com/Gitlawb/openclaude/compare/v0.29.0...v0.29.1) (2026-08-19)
 
