@@ -5,6 +5,10 @@ import React from 'react'
 import stripAnsi from 'strip-ansi'
 
 import { createRoot } from '../../ink.js'
+import {
+  acquireSharedMutationLock,
+  releaseSharedMutationLock,
+} from '../../test/sharedMutationLock.js'
 import type { LocalAgentTaskState } from '../../tasks/LocalAgentTask/LocalAgentTask.js'
 import { BackgroundTask } from './BackgroundTask.js'
 
@@ -88,12 +92,18 @@ function localAgentTask(
 
 // BackgroundTask doesn't read AppState/keybindings for the local_agent case
 // (it's a pure props -> Text renderer), so it renders standalone without
-// AppStateProvider/KeybindingSetup and without the shared mutation lock.
+// AppStateProvider/KeybindingSetup. createRoot still touches shared
+// terminal/process state (stdout, raw-mode toggling) that other concurrent
+// test files' Ink renders could stomp on, so the shared mutation lock is
+// still required around each render regardless of what the component reads.
 describe('BackgroundTask local_agent row', () => {
   let root: Awaited<ReturnType<typeof createRoot>> | null = null
   let stdin: ReturnType<typeof createTestStreams>['stdin'] | null = null
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await acquireSharedMutationLock(
+      'components/tasks/BackgroundTask.localAgent.test.tsx',
+    )
     root = null
     stdin = null
   })
@@ -102,6 +112,7 @@ describe('BackgroundTask local_agent row', () => {
     root?.unmount()
     stdin?.end()
     await Bun.sleep(0)
+    releaseSharedMutationLock()
   })
 
   test('appends the model display name after the status when the task has a model', async () => {

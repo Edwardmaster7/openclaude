@@ -4211,13 +4211,17 @@ export function REPL({
     // accumulating after #20174/#20175, all traced to this dep.
     mainLoopModel, pastedContents, ideSelection, setUserInputOnProcessing, setAbortController, addNotification, onQuery, stashedPrompt, setStashedPrompt, setAppState, onBeforeQuery, canUseTool, remoteSession, setMessages, awaitPendingHooks, repinScroll, takeInterruptionCorrectionReminder, restoreInterruptionCorrectionReminder]);
 
-  // Mitigates a reported double-submit while steering a subagent: the same
-  // text landed as two separate turns in quick succession. Root cause isn't
-  // confirmed yet (ruled out: chat:submit chord collision — not bound to
-  // plain Enter by default; queued_command replay — shouldShowUserMessage
-  // hides isMeta messages; prompt-suggestion auto-accept — already excluded
-  // by !viewingAgentTaskId). This guard drops an identical (task, text)
-  // resubmission within 800ms as a safety net pending a live repro.
+  // Diagnostic instrumentation for a reported double-submit while steering a
+  // subagent: the same text landed as two separate turns in quick succession.
+  // Root cause isn't confirmed (ruled out: chat:submit chord collision — not
+  // bound to plain Enter by default; queued_command replay —
+  // shouldShowUserMessage hides isMeta messages; prompt-suggestion auto-accept
+  // — already excluded by !viewingAgentTaskId). This logs a near-identical
+  // resubmission instead of dropping it: a user re-sending the exact same
+  // text on purpose is a real, legitimate case, and silently discarding their
+  // input (as an earlier version of this guard did) is a worse bug — silent
+  // data loss — than the rare duplicate it would catch. If this fires again,
+  // the log line pins down the exact timing gap for a real fix.
   const lastAgentSubmitRef = useRef<{
     taskId: string;
     input: string;
@@ -4228,11 +4232,7 @@ export function REPL({
     const now = Date.now();
     const last = lastAgentSubmitRef.current;
     if (last && last.taskId === task.id && last.input === input && now - last.at < 800) {
-      logForDebugging(`[onAgentSubmit] dropped duplicate resubmission within ${now - last.at}ms for task ${task.id}`);
-      setInputValue('');
-      helpers.setCursorOffset(0);
-      helpers.clearBuffer();
-      return;
+      logForDebugging(`[onAgentSubmit] near-identical resubmission ${now - last.at}ms apart for task ${task.id} — delivering both rather than guessing which one to drop`);
     }
     lastAgentSubmitRef.current = { taskId: task.id, input, at: now };
     if (isLocalAgentTask(task)) {

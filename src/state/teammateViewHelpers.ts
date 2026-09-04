@@ -87,8 +87,9 @@ export function enterTeammateView(
 
 /**
  * Exit teammate transcript view and return to leader's view.
- * Drops retain and clears messages back to stub form; if terminal,
- * schedules eviction via evictAfter so the row lingers briefly.
+ * Drops retain and clears messages back to stub form; if terminal, evicts
+ * the row immediately (see release()'s evictAfter: 0 above) since the user
+ * just finished looking at it.
  */
 export function exitTeammateView(
   setAppState: (updater: (prev: AppState) => AppState) => void,
