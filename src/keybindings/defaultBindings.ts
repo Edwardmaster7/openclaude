@@ -241,7 +241,7 @@ export const DEFAULT_BINDINGS: KeybindingBlock[] = [
       left: 'footer:previous',
       enter: 'footer:openSelected',
       escape: 'footer:clearSelection',
-      x: 'footer:close',
+      'ctrl+c': 'footer:close',
     },
   },
   // Message selector (rewind dialog) navigation

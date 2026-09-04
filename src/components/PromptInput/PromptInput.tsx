@@ -1960,20 +1960,16 @@ function PromptInput({
       if (tasksSelected && coordinatorTaskIndex >= 1) {
         const task = getVisibleAgentTasks(tasks)[coordinatorTaskIndex - 1];
         if (!task) return false;
-        // When the selected row IS the viewed agent, 'x' types into the
-        // steering input. Any other row — dismiss it.
-        if (viewSelectionMode === 'viewing-agent' && task.id === viewingAgentTaskId) {
-          onChange(input.slice(0, cursorOffset) + 'x' + input.slice(cursorOffset));
-          setCursorOffset(cursorOffset + 1);
-          return;
-        }
+        // ctrl+c isn't a printable character, so unlike the old 'x' binding
+        // there's no "typed into the steering input" case to preserve here —
+        // dismiss/stop the selected row whether or not it's being viewed.
         stopOrDismissAgent(task.id, setAppState);
         if (task.status !== 'running') {
           setCoordinatorTaskIndex(i => Math.max(minCoordinatorIndex, i - 1));
         }
         return;
       }
-      // Not handled — let 'x' fall through to type-to-exit
+      // Not handled — let ctrl+c fall through (e.g. to app:interrupt)
       return false;
     }
   }, {

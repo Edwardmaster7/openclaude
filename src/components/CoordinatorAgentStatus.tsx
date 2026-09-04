@@ -4,7 +4,7 @@ import { c as _c } from "react-compiler-runtime";
  *
  * Renders below the prompt input footer whenever local_agent tasks exist.
  * Visibility is driven by evictAfter: undefined (running/retained) shows
- * always; a timestamp shows until passed. Enter to view/steer, x to dismiss.
+ * always; a timestamp shows until passed. Enter to view/steer, ctrl+c to dismiss.
  */
 
 import figures from 'figures';
@@ -207,7 +207,7 @@ function AgentLine(t0) {
   const dim = !highlighted && !isViewed;
   const sep = isRunning ? PLAY_ICON : PAUSE_ICON;
   const namePart = name ? `${name}: ` : "";
-  const hintPart = isSelected && !isViewed ? ` · x to ${isRunning ? "stop" : "clear"}` : "";
+  const hintPart = isSelected && !isViewed ? ` · ctrl+c to ${isRunning ? "stop" : "clear"}` : "";
   const suffixPart = ` ${sep} ${elapsed}${tokenText}${queuedText}${hintPart}`;
   const availableForDesc = columns - stringWidth(prefix) - stringWidth(`${bullet} `) - stringWidth(namePart) - stringWidth(suffixPart);
   const t3 = Math.max(0, availableForDesc);
