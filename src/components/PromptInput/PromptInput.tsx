@@ -478,7 +478,14 @@ function PromptInput({
   // (down/right = forward, up/left = back). Selection lives in AppState so
   // pills rendered outside PromptInput (CompanionSprite) can read focus.
   const backgroundTaskCount = useMemo(() => countVisibleBackgroundTasks(tasks), [tasks]);
-  const tasksFooterVisible = backgroundTaskCount > 0 && !shouldHideTasksFooter(tasks, showSpinnerTree);
+  // countVisibleBackgroundTasks only counts running/pending tasks, but
+  // CoordinatorTaskPanel keeps a just-finished local_agent row visible for a
+  // grace period after completion (see PANEL_GRACE_MS / getVisibleAgentTasks).
+  // Without coordinatorTaskCount here, 'tasks' would drop out of footerItems
+  // during that grace window even though the panel still shows a row —
+  // stranding ↓ navigation on whatever other pill exists (or none), since
+  // handleHistoryDown can only enter items already in footerItems.
+  const tasksFooterVisible = (backgroundTaskCount > 0 || coordinatorTaskCount > 0) && !shouldHideTasksFooter(tasks, showSpinnerTree);
   const teamsFooterVisible = cachedTeams.length > 0;
   const footerItems = useMemo(() => [tasksFooterVisible && 'tasks', tmuxFooterVisible && 'tmux', bagelFooterVisible && 'bagel', teamsFooterVisible && 'teams', bridgeFooterVisible && 'bridge', companionFooterVisible && 'companion'].filter(Boolean) as FooterItem[], [tasksFooterVisible, tmuxFooterVisible, bagelFooterVisible, teamsFooterVisible, bridgeFooterVisible, companionFooterVisible]);
 
