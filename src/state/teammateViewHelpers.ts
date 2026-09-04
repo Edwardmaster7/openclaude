@@ -6,10 +6,6 @@ import {
   traceInterruptionEvent,
 } from '../utils/interruptionTrace.js'
 
-// Inlined from framework.ts — importing creates a cycle through
-// BackgroundTasksDialog. Keep in sync with PANEL_GRACE_MS there.
-const PANEL_GRACE_MS = 30_000
-
 import type { AppState } from './AppState.js'
 
 // Inline type check instead of importing isLocalAgentTask — breaks the
@@ -28,6 +24,13 @@ function isLocalAgent(task: unknown): task is LocalAgentTaskState {
  * Return the task released back to stub form: retain dropped, messages
  * cleared, evictAfter set if terminal. Shared by exitTeammateView and
  * the switch-away path in enterTeammateView.
+ *
+ * A terminal task evicts immediately (evictAfter: 0) here — the user just
+ * looked at it (retain was true) and explicitly navigated away, so there's
+ * nothing left to show them. This is distinct from a task finishing in the
+ * background while unviewed, which gets the PANEL_GRACE_MS window (set at
+ * the terminal-transition site in LocalAgentTask.tsx) so the user has a
+ * chance to notice it before it disappears.
  */
 function release(task: LocalAgentTaskState): LocalAgentTaskState {
   return {
@@ -35,9 +38,7 @@ function release(task: LocalAgentTaskState): LocalAgentTaskState {
     retain: false,
     messages: undefined,
     diskLoaded: false,
-    evictAfter: isTerminalTaskStatus(task.status)
-      ? Date.now() + PANEL_GRACE_MS
-      : undefined,
+    evictAfter: isTerminalTaskStatus(task.status) ? 0 : undefined,
   }
 }
 

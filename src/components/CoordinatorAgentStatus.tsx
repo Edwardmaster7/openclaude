@@ -18,7 +18,7 @@ import { enterTeammateView, exitTeammateView } from '../state/teammateViewHelper
 import { isPanelAgentTask, type LocalAgentTaskState } from '../tasks/LocalAgentTask/LocalAgentTask.js';
 import { formatDuration, formatNumber } from '../utils/format.js';
 import { evictTerminalTask } from '../utils/task/framework.js';
-import { isTerminalStatus } from './tasks/taskStatusUtils.js';
+import { getTaskStatusColor, isTerminalStatus } from './tasks/taskStatusUtils.js';
 
 /**
  * Which panel-managed tasks currently have a visible row.
@@ -141,7 +141,7 @@ type AgentLineProps = {
   onClick?: () => void;
 };
 function AgentLine(t0) {
-  const $ = _c(32);
+  const $ = _c(36);
   const {
     task,
     name,
@@ -184,6 +184,20 @@ function AgentLine(t0) {
   const highlighted = isSelected || hover;
   const prefix = highlighted ? figures.pointer + " " : "  ";
   const bullet = isViewed ? BLACK_CIRCLE : figures.circle;
+  // Color the bullet by terminal status (success/error/warning) once the
+  // agent finishes — matches Claude Code's colored status dot. While
+  // running, leave it uncolored (theme default via the dimColor below).
+  const statusColor = isTerminalStatus(task.status) ? getTaskStatusColor(task.status) : undefined;
+  let t1_5;
+  if ($[32] !== bullet || $[33] !== statusColor) {
+    t1_5 = <Text color={statusColor}>{bullet}</Text>;
+    $[32] = bullet;
+    $[33] = statusColor;
+    $[34] = t1_5;
+  } else {
+    t1_5 = $[34];
+  }
+  const coloredBullet = t1_5;
   const dim = !highlighted && !isViewed;
   const sep = isRunning ? PLAY_ICON : PAUSE_ICON;
   const namePart = name ? `${name}: ` : "";
@@ -227,8 +241,8 @@ function AgentLine(t0) {
     t7 = $[14];
   }
   let t8;
-  if ($[15] !== bullet || $[16] !== dim || $[17] !== elapsed || $[18] !== isViewed || $[19] !== prefix || $[20] !== sep || $[21] !== t5 || $[22] !== t6 || $[23] !== t7 || $[24] !== tokenText || $[25] !== truncated) {
-    t8 = <Text dimColor={dim} bold={isViewed}>{prefix}{bullet}{" "}{t5}{truncated} {sep} {elapsed}{tokenText}{t6}{t7}</Text>;
+  if ($[15] !== bullet || $[16] !== dim || $[17] !== elapsed || $[18] !== isViewed || $[19] !== prefix || $[20] !== sep || $[21] !== t5 || $[22] !== t6 || $[23] !== t7 || $[24] !== tokenText || $[25] !== truncated || $[35] !== coloredBullet) {
+    t8 = <Text dimColor={dim} bold={isViewed}>{prefix}{coloredBullet}{" "}{t5}{truncated} {sep} {elapsed}{tokenText}{t6}{t7}</Text>;
     $[15] = bullet;
     $[16] = dim;
     $[17] = elapsed;
@@ -241,6 +255,7 @@ function AgentLine(t0) {
     $[24] = tokenText;
     $[25] = truncated;
     $[26] = t8;
+    $[35] = coloredBullet;
   } else {
     t8 = $[26];
   }
