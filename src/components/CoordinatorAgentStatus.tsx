@@ -180,7 +180,13 @@ function AgentLine(t0) {
   const tokenText = t2;
   const queuedCount = task.pendingMessages.length;
   const queuedText = queuedCount > 0 ? ` · ${queuedCount} queued` : "";
-  const displayDescription = task.progress?.summary || task.description;
+  // Collapse to a single line: this row's layout puts the ❯ arrow before
+  // displayDescription and the elapsed/tokens/hint suffix after it, all on
+  // one physical line — an embedded newline (e.g. a markdown-formatted
+  // summary that ignored its "3-5 words" prompt) makes wrapText's
+  // truncate-end pass the newline straight through, and Ink's <Text> then
+  // renders it as a real line break, splitting the arrow from the suffix.
+  const displayDescription = (task.progress?.summary || task.description).replace(/\s+/g, ' ').trim();
   const highlighted = isSelected || hover;
   const prefix = highlighted ? figures.pointer + " " : "  ";
   const bullet = isViewed ? BLACK_CIRCLE : figures.circle;
