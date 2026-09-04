@@ -746,10 +746,13 @@ function ModelsTab(t0: ModelsTabProps): React.ReactNode {
     }
     if (key.upArrow) {
       if (scrollOffset > 0) {
-        setScrollOffset(_temp8);
+        setScrollOffset(prev => Math.max(prev - 2, 0));
       } else {
         focusHeader();
       }
+    }
+    if (key.tab) {
+      setActiveTab(prev => (prev === "Overview" ? "Models" : "Overview"));
     }
   }, t2);
   if (modelEntries.length === 0) {

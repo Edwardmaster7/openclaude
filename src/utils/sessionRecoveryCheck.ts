@@ -97,10 +97,10 @@ export async function handleCrashRecoveryCheck(
 
   if (mode === 'prompt') {
     const prompt = options.promptFn ?? promptCrashRecoveryUser
-    const question = `Sessão anterior interrompida encontrada (ID: ${candidate.sessionId}). Voltar para a sessão interrompida? (Sim / Não)`
+    const question = `Sessão anterior interrompida encontrada (ID: ${candidate.sessionId}). Voltar para a sessão interrompida? (y / n)`
     const answer = await prompt(question)
     const lower = answer.toLowerCase().trim()
-    if (lower === 's' || lower === 'sim' || lower === 'y' || lower === 'yes') {
+    if (lower === 'y' || lower === 'yes') {
       return candidate.sessionId
     } else {
       await markCleanExit(projectDir)

@@ -13,10 +13,8 @@ export const call: LocalCommandCall = async (args, context) => {
 
   if (isHeavy && context?.setMessages) {
     const loadingMsg = createSystemMessage('⏳ Calculating session costs…', 'info')
-    // Override uuid so we can reliably remove it after the work is done.
     ;(loadingMsg as any).uuid = LOADING_MSG_UUID
     context.setMessages((prev) => [...prev, loadingMsg])
-    await new Promise((resolve) => setTimeout(resolve, 600))
   }
 
   let resultValue: string
